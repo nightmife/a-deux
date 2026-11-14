@@ -117,3 +117,29 @@ test('formatage', () => {
   assert.equal(L.fmtStock('pdt', 2500), '2,5 kg');
   assert.equal(L.euro(2.5), '2,50 €');
 });
+
+test('menu de la semaine : varié, sans doublon, frais en premier, moins cher que des recettes prises au hasard', () => {
+  const state = { people, equip: ['pl', 'af', 'mo'], avoid: [], stock: {}, menu: ['carbo'], history: [], disliked: ['chili'] };
+  const menu = L.planMenu(state, 7, () => 0.5);
+  assert.equal(menu.length, 7);
+  assert.equal(new Set(menu).size, 7);
+  assert.ok(menu.includes('carbo') && !menu.includes('chili'));
+  const fresh = menu.map((id) => L.isFresh(RECIPE_BY_ID[id]));
+  assert.ok(fresh.indexOf(false) === -1 || fresh.lastIndexOf(true) < fresh.indexOf(false));
+  for (const id of menu) assert.ok(L.recipeAllowed(RECIPE_BY_ID[id], state.equip, state.avoid));
+  const proteins = menu.map((id) => RECIPE_BY_ID[id].ing.find((i) => i.role === 'p')?.id);
+  assert.ok(Math.max(...Object.values(Object.groupBy(proteins, (p) => p)).map((g) => g.length)) <= 3);
+  const cost = L.shopping(menu, people, {}).total;
+  const naive = L.shopping(RECIPES.filter((r) => L.recipeAllowed(r, state.equip, [])).slice(0, 7).map((r) => r.id), people, {}).total;
+  assert.ok(cost < naive, `${cost} < ${naive}`);
+  assert.equal(L.planMenu({ ...state, avoid: ['viande', 'poisson'] }, 14, () => 0.5).length, 14);
+});
+
+test('plats assemblés : proportions gardées (2 tranches de pain par croque)', () => {
+  const n = L.needs(RECIPE_BY_ID.croque, people);
+  assert.equal(n.painmie, 2 * n.jambon);
+  assert.equal(n.jambon, n.cheddar);
+  assert.ok(n.painmie <= 10);
+  const b = L.needs(RECIPE_BY_ID.burger, people);
+  assert.equal(b.painburger, 2);
+});

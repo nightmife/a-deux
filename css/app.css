@@ -267,6 +267,9 @@ a { color: inherit; }
 .see { display: flex; align-items: center; gap: 2px; font-size: 14px; font-weight: 650; color: var(--accent); }
 .see .ic { width: 15px; height: 15px; stroke-width: 2.6; }
 .recipe .actions { padding: 10px 14px 14px; }
+.plan { margin-bottom: 12px; }
+.two { display: grid; grid-template-columns: 1fr 1fr; }
+.btn:disabled { opacity: .5; }
 
 /* ---------- Listes ---------- */
 

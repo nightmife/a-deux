@@ -365,17 +365,23 @@ function viewIdeas() {
         </div></article>`;
   }
 
-  html += '<h3 class="section">Au menu</h3>';
+  html += `<h3 class="section" id="menu">Au menu${S.menu.length ? ` · ${plural(S.menu.length, 'repas', 'repas')}` : ''}</h3>`;
+  if (id) html += `<button class="btn soft plan" data-a="plan-open">📅 Planifier plusieurs repas d'un coup</button>`;
   if (!S.menu.length) {
-    html += '<p class="muted pad">Ajoute les recettes qui te plaisent : la liste de courses se remplit toute seule.</p>';
+    html += '<p class="muted pad">Ajoute les recettes qui te plaisent, ou laisse l\'app composer le menu de la semaine : la liste de courses se remplit toute seule.</p>';
   } else {
+    const shop = L.shopping(S.menu, S.people, S.stock);
     html += `<div class="list">${S.menu.map((mid) => {
       const r = RECIPE_BY_ID[mid];
       const miss = L.shopping([mid], S.people, S.stock).items.length;
+      const fresh = L.isFresh(r) ? ' · frais, à cuisiner en premier' : '';
       return `<button class="row" data-a="recipe" data-id="${mid}">${media(r, 'thumb')}
         <span class="row-main"><b>${esc(r.name)}</b>
-        <small class="${miss ? '' : 'ok'}">${miss ? `🛒 ${plural(miss, 'ingrédient', 'ingrédients')} à acheter` : '✓ Prêt à cuisiner'}</small></span>${icon('chev', 'muted')}</button>`;
-    }).join('')}</div>`;
+        <small class="${miss ? '' : 'ok'}">${miss ? `🛒 ${plural(miss, 'ingrédient', 'ingrédients')} à acheter${fresh}` : '✓ Prêt à cuisiner'}</small></span>${icon('chev', 'muted')}</button>`;
+    }).join('')}
+      <button class="row" data-a="tab" data-tab="shop"><span class="row-main"><b>${shop.items.length ? `Courses pour tout le menu : ${L.euro(shop.total)}` : 'Tout est au placard'}</b>
+        <small>${shop.items.length ? `${plural(shop.items.length, 'article', 'articles')} à acheter en une fois` : 'Rien à acheter pour ce menu'}</small></span>${icon('chev', 'muted')}</button></div>
+      ${S.menu.length > 1 ? '<button class="btn text" data-a="menu-clear">Vider le menu</button>' : ''}`;
   }
   return html;
 }
@@ -403,6 +409,19 @@ function sheetRecipe({ id, who: whoRaw = 'all' }) {
       <span class="q">${L.fmtQty(it.id, L.roundQty(it.id, it.q))}</span>${it.boost ? '<span class="tag boost">boost</span>' : ''}</li>`).join('');
   }
 
+  const unitLabel = (n) => `${L.frac(n)} ${r.unit[0]}${n >= 2 ? 's' : ''}`;
+  // Nombre de croques/wraps par personne : parts arrondies au demi, dont la somme fait le total.
+  const unitShare = [];
+  if (r.unit) {
+    const all = total[r.unit[1]] / r.unit[2];
+    const raw = portions.map((po) => po.items.find((it) => it.id === r.unit[1]).q);
+    const sum = raw.reduce((a, b) => a + b, 0);
+    let left = all;
+    raw.forEach((q, i) => {
+      const n = i === raw.length - 1 ? left : Math.min(left, Math.round((all * q / sum) * 2) / 2);
+      unitShare.push(n); left -= n;
+    });
+  }
   const baseK = portions.map((po) => po.items.filter((it) => !it.boost).reduce((s, it) => s + L.kcalOf(it.id, it.q), 0));
   const sumK = baseK.reduce((a, b) => a + b, 0);
   const plates = S.people.map((p, i) => {
@@ -412,7 +431,7 @@ function sheetRecipe({ id, who: whoRaw = 'all' }) {
     const share = Math.round((baseK[i] / sumK) * 100);
     return `<div class="plate"><span class="avatar p${i}">${esc(p.name[0].toUpperCase())}</span>
       <div><b>${esc(p.name)}${multi ? ` · ${share} % du plat` : ''}</b>
-      <small>${int(po.kcal)} kcal · ${Math.round(po.prot)} g de protéines</small>
+      <small>${r.unit ? `${unitLabel(unitShare[i])} · ` : ''}${int(po.kcal)} kcal · ${Math.round(po.prot)} g de protéines</small>
       ${boosts ? `<small class="boostline">${boosts}</small>` : ''}</div></div>`;
   }).join('');
 
@@ -423,13 +442,15 @@ function sheetRecipe({ id, who: whoRaw = 'all' }) {
 
   const foot = inMenu
     ? `<button class="btn primary" data-a="cook" data-id="${id}">${icon('check')} On l'a cuisinée</button>
-       <button class="btn text" data-a="unmenu" data-id="${id}">Retirer du menu</button>`
+       <div class="two"><button class="btn text" data-a="swap" data-id="${id}">Remplacer</button>
+       <button class="btn text" data-a="unmenu" data-id="${id}">Retirer du menu</button></div>`
     : `<button class="btn primary" data-a="add" data-id="${id}">${icon('plus')} Ajouter au menu</button>
        <button class="btn text" data-a="dislike" data-id="${id}">Ne plus proposer cette recette</button>`;
 
   return `${media(r, 'cover')}
     <div class="sheet-pad">
       <h2>${esc(r.name)}</h2>${metaChips(r)}
+      ${r.unit ? `<p class="hint">Ça fait <b>${unitLabel(total[r.unit[1]] / r.unit[2])}</b> en tout.</p>` : ''}
       <h3>Dans l'assiette</h3><div class="plates">${plates}</div>
       <h3>Ingrédients</h3>
       ${multi ? `<div class="seg small">${[['all', `Pour ${S.people.length}`], ...S.people.map((p) => [p.id, esc(p.name)])].map(([v, lab]) =>
@@ -441,6 +462,18 @@ function sheetRecipe({ id, who: whoRaw = 'all' }) {
       ${PHOTOS[r.id] ? `<p class="muted small">Photo d'illustration : <a href="${esc(PHOTOS[r.id].u)}" target="_blank" rel="noopener">${esc(PHOTOS[r.id].a)}</a>, ${esc(PHOTOS[r.id].l)}, via Wikimedia Commons</p>` : ''}
     </div>
     <div class="sheet-foot">${foot}</div>`;
+}
+
+function sheetPlan({ n }) {
+  const add = Math.max(0, n - S.menu.length);
+  return `<div class="sheet-pad"><h2>Planifier les repas</h2>
+    <p class="muted">Choisis combien de repas tu veux prévoir. L'app compose un menu varié qui réutilise les mêmes paquets, puis fait une seule liste de courses pour tout.</p>
+    <div class="stepper"><button class="iconbtn big" data-a="plan-n" data-d="-1" aria-label="Moins">−</button>
+      <b>${n} repas</b>
+      <button class="iconbtn big" data-a="plan-n" data-d="1" aria-label="Plus">+</button></div>
+    <p class="muted small center">${S.menu.length ? `${plural(S.menu.length, 'repas déjà au menu', 'repas déjà au menu')}, ${add} à ajouter.` : 'Un repas = un plat pour tout le foyer (7 = un dîner par jour, 14 = midi et soir).'}
+      Tu pourras remplacer ou retirer chaque plat ensuite.</p>
+    <button class="btn primary" data-a="plan-do" ${add ? '' : 'disabled'}>${add ? `Composer ${plural(add, 'repas', 'repas')}` : 'Menu déjà complet'}</button></div>`;
 }
 
 // ---------- Onglet Courses ----------
@@ -729,7 +762,7 @@ const isStandalone = () => navigator.standalone === true || matchMedia('(display
 const TABS = [['ideas', 'Recettes', 'ideas'], ['shop', 'Courses', 'shop'], ['stock', 'Placard', 'stock'], ['track', 'Suivi', 'track']];
 const VIEWS = { ideas: viewIdeas, shop: viewShop, stock: viewStock, track: viewTrack, settings: viewSettings };
 const SHEETS = {
-  recipe: sheetRecipe, stockEdit: sheetStockEdit, stockAdd: sheetStockAdd, weigh: sheetWeigh,
+  recipe: sheetRecipe, plan: sheetPlan, stockEdit: sheetStockEdit, stockAdd: sheetStockAdd, weigh: sheetWeigh,
   history: sheetHistory, person: sheetPerson, export: sheetExport, import: sheetImport,
 };
 
@@ -827,6 +860,30 @@ const A = {
     if (S.current === d.id) S.current = null;
     ui.anim = true; closeSheet(); commit({ sheet: false });
     toast('Ajoutée au menu · liste de courses mise à jour');
+  },
+  'plan-open'() { openSheet({ type: 'plan', n: Math.min(14, Math.max(7, S.menu.length + 3)) }); },
+  'plan-n'(d) { ui.sheet.n = Math.min(14, Math.max(2, ui.sheet.n + Number(d.d))); renderSheet(); },
+  'plan-do'() {
+    const before = S.menu.length;
+    S.menu = L.planMenu(S, ui.sheet.n);
+    if (S.menu.includes(S.current)) S.current = null;
+    closeSheet(); commit({ sheet: false });
+    document.getElementById('menu')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    toast(S.menu.length > before ? `Menu de ${S.menu.length} repas prêt · liste de courses à jour` : 'Plus aucune recette à ajouter');
+  },
+  swap(d) {
+    const i = S.menu.indexOf(d.id);
+    if (i < 0) return;
+    const rest = S.menu.filter((x) => x !== d.id);
+    const pick = L.rankRecipes({ ...S, menu: rest }).find((x) => x !== d.id);
+    if (!pick) return toast('Aucune autre recette disponible');
+    S.menu[i] = pick;
+    if (S.current === pick) S.current = null;
+    save(); render(); openSheet({ type: 'recipe', id: pick, who: 'all' });
+  },
+  'menu-clear'() {
+    if (!confirm('Retirer toutes les recettes du menu ?')) return;
+    S.menu = []; commit({ sheet: false });
   },
   unmenu(d) { S.menu = S.menu.filter((x) => x !== d.id); closeSheet(); commit({ sheet: false }); },
   dislike(d) {

@@ -57,6 +57,7 @@ export function portion(recipe, person) {
   let items = recipe.ing.map(({ id, q, role }) => {
     let f = 1;
     if (role === 'v') f = mu.v[app];
+    else if (recipe.whole) f = 1;
     else if (role === 'f') f = t.mode === 'gain' && app === 'petit' ? 1.4 : mu.f;
     else if (role !== 'c') f = mu[role] ?? 1;
     return { id, role, q: q * f };
@@ -65,9 +66,9 @@ export function portion(recipe, person) {
   // Les féculents comblent l'écart avec la cible.
   const carbs = items.filter((it) => it.role === 'c');
   const carbK = sumKcal(carbs);
-  if (carbK > 0) {
+  if (carbK > 0 && !recipe.whole) {
     const fixed = sumKcal(items) - carbK;
-    const cf = clamp((T - fixed) / carbK, 0.5, 2.2);
+    const cf = clamp((T - fixed) / carbK, 0.5, 1.7);
     carbs.forEach((it) => { it.q *= cf; });
   }
 
@@ -87,7 +88,7 @@ export function portion(recipe, person) {
       }
     }
     if (total + boostK < T * 0.97) {
-      const s = Math.min(1.6, (T - boostK) / total);
+      const s = Math.min(recipe.whole ? 2 : 1.6, (T - boostK) / total);
       items.forEach((it) => { if (!it.boost) it.q *= s; });
     }
   }
@@ -119,7 +120,14 @@ export function needs(recipe, people) {
     for (const it of portion(recipe, p).items) raw[it.id] = (raw[it.id] || 0) + it.q;
   }
   const out = {};
-  for (const id of Object.keys(raw)) out[id] = roundQty(id, raw[id]);
+  for (const id of Object.keys(raw)) {
+    let q = roundQty(id, raw[id]);
+    // Si on dépasse de peu un nombre entier de paquets, on s'y limite : pas de paquet entamé pour 50 g.
+    const { u, sp, pack } = ING[id];
+    const k = Math.floor(q / pack);
+    if (u !== 'pc' && !sp && k >= 1 && q - k * pack <= pack * 0.12) q = k * pack;
+    out[id] = q;
+  }
   return out;
 }
 
@@ -219,12 +227,28 @@ export function rankRecipes(state, rng = Math.random) {
         + 0.5 * (mealCost(r, people) / people.length)
         - 0.4 * reused
         + (ri >= 0 ? 4 - 0.4 * ri : 0)
-        + (menuProteins.includes(mainProtein(r)) ? 1.5 : 0)
+        + 1.5 * menuProteins.filter((p) => p === mainProtein(r)).length
         + rng() * 1.5;
       return { id: r.id, score };
     })
     .sort((a, b) => a.score - b.score)
     .map((x) => x.id);
+}
+
+// Viande et poisson frais : à cuisiner dans les premiers jours après les courses.
+const FRESH = new Set(['poulet', 'dinde', 'hache', 'saumon', 'chipo']);
+export const isFresh = (recipe) => recipe.ing.some((it) => FRESH.has(it.id));
+
+// Complète le menu jusqu'à n repas : plats variés, qui réutilisent les mêmes paquets. Les plats frais en premier.
+export function planMenu(state, n, rng = Math.random) {
+  const menu = [...state.menu];
+  while (menu.length < n) {
+    const pick = rankRecipes({ ...state, menu }, rng)[0];
+    if (!pick) break;
+    menu.push(pick);
+  }
+  const fresh = (id) => (RECIPE_BY_ID[id] && isFresh(RECIPE_BY_ID[id]) ? 0 : 1);
+  return menu.map((id, i) => [id, i]).sort((a, b) => fresh(a[0]) - fresh(b[0]) || a[1] - b[1]).map((x) => x[0]);
 }
 
 // ---------- Suivi du poids ----------

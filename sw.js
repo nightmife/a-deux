@@ -1,5 +1,5 @@
 // Hors-ligne : réseau d'abord pour le code (mises à jour immédiates), cache d'abord pour les images.
-const CACHE = 'adeux-v2';
+const CACHE = 'adeux-v3';
 const CORE = ['./', 'index.html', 'css/app.css', 'js/app.js', 'js/logic.js', 'js/data.js', 'js/photos.js', 'js/config.js', 'js/sync.js', 'js/merge.js',
   'manifest.webmanifest', 'icons/icon-180.png', 'icons/icon-192.png'];
 
