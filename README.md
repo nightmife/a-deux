@@ -22,4 +22,7 @@ Ouvrir l'URL du site dans Safari → bouton Partager → « Sur l'écran d'accue
 - `js/data.js` : ingrédients (prix estimés Intermarché) et recettes
 - `js/logic.js` : calories, portions, placard, courses, suggestions (pur, testé)
 - `js/app.js` : interface
+- `js/sync.js`, `js/merge.js` : synchronisation entre téléphones et fusion des modifications (testé)
+- `js/config.js` : URL et clé publique du projet Supabase (vide = synchro désactivée)
+- `supabase/schema.sql` : table et fonctions à créer dans Supabase
 - `tools/photos.py` : récupération des photos (Wikimedia Commons) et de leurs crédits

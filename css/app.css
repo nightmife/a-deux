@@ -360,6 +360,10 @@ button.row:active { background: var(--chip); }
 .search { margin-bottom: 4px; }
 .code { width: 100%; border: 1.5px solid var(--line); border-radius: 14px; background: var(--card); color: var(--ink); padding: 12px; font: 13px/1.4 ui-monospace, Menlo, monospace; resize: none; word-break: break-all; }
 .row.static { cursor: default; }
+.sync { display: grid; gap: 4px; width: 100%; padding: 16px 18px; text-align: center; margin-bottom: 10px; }
+.sync b { font: 800 28px/1.2 ui-monospace, Menlo, monospace; letter-spacing: .06em; }
+.sync .off { color: var(--warn-ink); }
+.codein { text-transform: uppercase; text-align: center; font-family: ui-monospace, Menlo, monospace !important; letter-spacing: .06em; }
 
 /* ---------- Suivi ---------- */
 

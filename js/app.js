@@ -1,6 +1,8 @@
 import { INGREDIENTS as ING, RECIPE_BY_ID, CATS, EQUIPMENT, AVOID } from './data.js';
 import * as L from './logic.js';
 import { PHOTOS } from './photos.js';
+import { SYNC } from './config.js';
+import { createSync, formatCode } from './sync.js';
 
 // ---------- État ----------
 
@@ -21,6 +23,11 @@ function sanitize(raw) {
   s.avoid = s.avoid.filter((a) => AVOID[a]);
   s.stock = Object.fromEntries(Object.entries(s.stock).filter(([id, q]) => ING[id] && q > 0));
   s.people = s.people.filter((p) => p && p.id && p.weight > 0 && p.height > 0 && Array.isArray(p.weighIns));
+  for (const p of s.people) {
+    p.weighIns = p.weighIns.filter((x) => x && x.d && x.w > 0).sort((a, b) => a.d.localeCompare(b.d));
+    if (p.weighIns.length) p.weight = p.weighIns[p.weighIns.length - 1].w;
+    else p.weighIns = [{ d: L.today(), w: p.weight }];
+  }
   if (!s.people.length) s.onboarded = false;
   return s;
 }
@@ -34,9 +41,57 @@ function load() {
 }
 
 let S = load();
-function save() {
+function storeLocal() {
   try { localStorage.setItem(KEY, JSON.stringify(S)); } catch { /* mode privé */ }
 }
+function save() {
+  storeLocal();
+  sync?.push();
+}
+
+// ---------- Synchronisation entre téléphones ----------
+
+const SYNC_KEY = 'adeux.sync';
+
+async function rpc(fn, body) {
+  const res = await fetch(`${SYNC.url.replace(/\/+$/, '')}/rest/v1/rpc/${fn}`, {
+    method: 'POST',
+    cache: 'no-store',
+    headers: { apikey: SYNC.key, Authorization: `Bearer ${SYNC.key}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) throw new Error(`http ${res.status}`);
+  return res.json();
+}
+
+// Un autre téléphone a modifié le foyer : on adopte l'état fusionné et on rafraîchit l'écran.
+function applyRemote(state) {
+  S = sanitize(state);
+  storeLocal();
+  if (S.onboarded) ui.ob = null;
+  if (ui.sheet) {
+    const { type, id } = ui.sheet;
+    const gone = (['weigh', 'history'].includes(type) || (type === 'person' && id)) && personIndex(id) < 0;
+    if (gone) closeSheet();
+    else if (['recipe', 'stockEdit', 'history'].includes(type)) renderSheet();
+  }
+  render();
+}
+
+const sync = SYNC.url && SYNC.key ? createSync({
+  rpc,
+  store: {
+    load() { try { return JSON.parse(localStorage.getItem(SYNC_KEY)); } catch { return null; } },
+    save(m) {
+      try {
+        if (m) localStorage.setItem(SYNC_KEY, JSON.stringify(m)); else localStorage.removeItem(SYNC_KEY);
+      } catch { /* mode privé */ }
+    },
+  },
+  getState: () => S,
+  setState: applyRemote,
+  onStatus: () => { if (S.onboarded && ui.tab === 'settings') render(); },
+}) : null;
 
 const ui = { tab: 'ideas', ob: null, draft: null, sheet: null, sel: {}, anim: false };
 
@@ -327,7 +382,8 @@ function viewIdeas() {
 
 // ---------- Fiche recette ----------
 
-function sheetRecipe({ id, who = 'all' }) {
+function sheetRecipe({ id, who: whoRaw = 'all' }) {
+  const who = whoRaw !== 'all' && personIndex(whoRaw) < 0 ? 'all' : whoRaw;
   const r = RECIPE_BY_ID[id];
   const inMenu = S.menu.includes(id);
   const portions = S.people.map((p) => L.portion(r, p));
@@ -564,16 +620,34 @@ function viewSettings() {
     <h3 class="section">Magasin</h3>
     <div class="list"><div class="row static"><span class="row-main"><b>Intermarché</b><small>Prix estimés, à vérifier en rayon</small></span>${icon('check', 'ok')}</div></div>
     <h3 class="section">Deux téléphones</h3>
-    <p class="muted pad">Copie tes données sur un autre iPhone avec un code. À refaire quand vous voulez vous resynchroniser.</p>
-    <div class="pad stack"><button class="btn soft" data-a="export-open">Envoyer mes données</button>
-      <button class="btn soft" data-a="import-open">Recevoir un code</button></div>
+    ${syncSection()}
     <h3 class="section">Recettes masquées</h3>
     <div class="pad stack">${S.disliked.length
     ? `<button class="btn soft" data-a="undislike">Réafficher ${plural(S.disliked.length, 'recette masquée', 'recettes masquées')}</button>`
     : '<p class="muted">Aucune recette masquée.</p>'}</div>
     <h3 class="section">Données</h3>
     <div class="pad stack"><button class="btn danger" data-a="reset">Tout effacer et recommencer</button></div>
-    <p class="muted pad small center">À Deux · données enregistrées uniquement sur cet appareil.<br>Photos : Wikimedia Commons, crédits dans chaque recette.</p>`;
+    <p class="muted pad small center">À Deux · ${sync?.status().code ? 'données enregistrées sur cet appareil et synchronisées avec votre foyer' : 'données enregistrées uniquement sur cet appareil'}.<br>Photos : Wikimedia Commons, crédits dans chaque recette.</p>`;
+}
+
+function syncSection() {
+  if (!sync) {
+    return `<p class="muted pad">Copie tes données sur un autre iPhone avec un code. À refaire quand vous voulez vous resynchroniser.</p>
+    <div class="pad stack"><button class="btn soft" data-a="export-open">Envoyer mes données</button>
+      <button class="btn soft" data-a="import-open">Recevoir un code</button></div>`;
+  }
+  const st = sync.status();
+  if (!st.code) {
+    return `<p class="muted pad">Partagez le même foyer : recettes, menu, courses, placard et suivi se mettent à jour tout seuls sur les deux téléphones.</p>
+    <div class="pad stack"><button class="btn primary" data-a="sync-create">Créer notre foyer partagé</button>
+      <button class="btn soft" data-a="import-open">Rejoindre avec un code</button></div>`;
+  }
+  return `<button class="card sync" data-a="sync-copy" aria-label="Copier le code du foyer">
+      <small>Code du foyer · touche pour copier</small><b>${formatCode(st.code)}</b>
+      <small class="${st.ok ? 'ok' : 'off'}">${st.ok ? '✓ Synchronisation active' : 'Hors ligne · tes changements partiront au retour du réseau'}</small></button>
+    <p class="muted pad">Sur l'autre téléphone : « J'ai déjà un code de partage » au démarrage, ou Réglages puis « Rejoindre avec un code ».</p>
+    <div class="pad stack"><button class="btn primary" data-a="sync-share">Envoyer le code</button>
+      <button class="btn text" data-a="sync-leave">Quitter le foyer partagé</button></div>`;
 }
 
 function sheetPerson({ id, errs }) {
@@ -621,6 +695,13 @@ function sheetExport({ code }) {
 }
 
 function sheetImport({ err }) {
+  if (sync) {
+    return `<div class="sheet-pad"><h2>Rejoindre un foyer</h2>
+    <p class="muted">Entre le code du foyer affiché sur l'autre téléphone (Réglages). Vous partagerez ensuite les mêmes données, mises à jour automatiquement.</p>
+    <div class="input"><input id="code" class="codein" placeholder="ABCDE-FGHJK" autocomplete="off" autocapitalize="characters" spellcheck="false" maxlength="2000"></div>
+    ${err ? `<p class="hint warn">${err}</p>` : ''}
+    <button class="btn primary" data-a="import-do">Rejoindre</button></div>`;
+  }
   return `<div class="sheet-pad"><h2>Recevoir un code</h2>
     <p class="muted">Colle ici le code envoyé depuis l'autre téléphone. Les pesées des deux téléphones sont conservées ; le reste est remplacé.</p>
     <textarea id="code" class="code" rows="5" placeholder="AD1.…" autocomplete="off" autocapitalize="off" spellcheck="false"></textarea>
@@ -757,7 +838,7 @@ const A = {
   cook(d) {
     L.cook(S.stock, RECIPE_BY_ID[d.id], S.people);
     S.menu = S.menu.filter((x) => x !== d.id);
-    S.history.push({ id: d.id, d: L.today() });
+    S.history.push({ id: d.id, d: L.today(), t: Date.now() });
     if (S.history.length > 200) S.history = S.history.slice(-200);
     closeSheet(); commit({ sheet: false }); toast('Bon appétit ! Placard mis à jour');
   },
@@ -838,20 +919,53 @@ const A = {
   },
   'export-share'() { navigator.share({ text: $('#code').value }).catch(() => {}); },
   'import-open'() { openSheet({ type: 'import' }); },
-  async 'import-do'() {
+  async 'import-do'(d, el) {
+    const raw = $('#code').value.trim();
+    const household = sync && !/^AD[01]\./.test(raw);
     try {
-      const inc = await decodeState($('#code').value);
+      if (household) {
+        if (S.onboarded && !confirm('Rejoindre ce foyer ? Les données de ce téléphone seront remplacées par celles du foyer.')) return;
+        el.disabled = true;
+        await sync.join(raw);
+        ui.ob = null; ui.tab = 'ideas';
+        closeSheet(); render(true); toast('Foyer rejoint · synchronisation active');
+        return;
+      }
+      const inc = await decodeState(raw);
       if (S.onboarded && !confirm('Remplacer les données de ce téléphone par celles du code ?')) return;
       mergeImport(inc);
       ui.ob = null; ui.tab = 'ideas';
       closeSheet(); commit({ top: true, sheet: false }); toast('Données importées');
-    } catch {
-      ui.sheet.err = "Ce code n'est pas valide. Copie-le en entier depuis l'autre téléphone.";
+    } catch (e) {
+      if (!ui.sheet) return;
+      if (!household) ui.sheet.err = "Ce code n'est pas valide. Copie-le en entier depuis l'autre téléphone.";
+      else if (e.message === 'notfound') ui.sheet.err = "Ce code ne correspond à aucun foyer. Vérifie-le sur l'autre téléphone.";
+      else ui.sheet.err = 'Connexion impossible. Vérifie ta connexion internet et réessaie.';
       renderSheet();
     }
   },
+  async 'sync-create'(d, el) {
+    el.disabled = true;
+    try {
+      await sync.create();
+      render(); toast("Foyer créé · envoie le code à l'autre téléphone");
+    } catch { el.disabled = false; toast('Connexion impossible, réessaie'); }
+  },
+  async 'sync-copy'() {
+    try { await navigator.clipboard.writeText(formatCode(sync.status().code)); toast('Code copié'); } catch { toast('Copie impossible, recopie le code à la main'); }
+  },
+  'sync-share'() {
+    const text = `Rejoins notre foyer sur À Deux avec ce code : ${formatCode(sync.status().code)}`;
+    if (navigator.share) navigator.share({ text }).catch(() => {});
+    else A['sync-copy']();
+  },
+  'sync-leave'() {
+    if (!confirm("Quitter le foyer partagé ? Tes données restent sur ce téléphone, mais ne seront plus synchronisées.")) return;
+    sync.leave(); render();
+  },
   reset() {
     if (!confirm('Effacer tous les profils, le placard et le suivi de cet appareil ?')) return;
+    sync?.leave();
     try { localStorage.removeItem(KEY); } catch { /* ignoré */ }
     S = blank(); ui.ob = null; ui.tab = 'ideas'; render(true);
   },
@@ -890,6 +1004,14 @@ document.addEventListener('input', (ev) => {
 document.addEventListener('keydown', (ev) => { if (ev.key === 'Escape') closeSheet(); });
 
 render(true);
+
+if (sync) {
+  const tick = () => { if (document.visibilityState === 'visible') sync.pull(); };
+  setInterval(tick, 4000);
+  document.addEventListener('visibilitychange', tick);
+  window.addEventListener('online', tick);
+  tick();
+}
 
 if ('serviceWorker' in navigator && location.protocol === 'https:') {
   navigator.serviceWorker.register('sw.js').catch(() => {});
