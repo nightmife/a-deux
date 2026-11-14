@@ -382,7 +382,7 @@ function sheetRecipe({ id, who = 'all' }) {
       <p class="muted small">Sel, poivre et eau ne sont pas listés.</p>
       <h3>Préparation</h3>
       <ol class="steps">${steps.map((s) => `<li>${s}</li>`).join('')}</ol>
-      ${PHOTOS[r.id] ? `<p class="muted small">Photo : ${esc(PHOTOS[r.id].a)} (${esc(PHOTOS[r.id].l)})</p>` : ''}
+      ${PHOTOS[r.id] ? `<p class="muted small">Photo d'illustration : <a href="${esc(PHOTOS[r.id].u)}" target="_blank" rel="noopener">${esc(PHOTOS[r.id].a)}</a>, ${esc(PHOTOS[r.id].l)}, via Wikimedia Commons</p>` : ''}
     </div>
     <div class="sheet-foot">${foot}</div>`;
 }
@@ -414,10 +414,11 @@ function viewShop() {
       cat = ing.cat;
       html += `<h3 class="section">${CATS[cat]}</h3><div class="list">`;
     }
-    const info = `il en faut ${L.fmtStock(it.id, it.need)}${it.have > 0 ? ` · tu as ${L.fmtStock(it.id, it.have)}` : ''}`;
+    const unit = ing.u === 'pc' && ing.pack === 1;
+    const info = `il en faut ${unit ? L.frac(it.need) : L.fmtStock(it.id, it.need)}${it.have > 0 ? ` · tu as ${L.fmtStock(it.id, it.have)}` : ''}`;
     html += `<button class="row check ${S.checked[it.id] ? 'on' : ''}" data-a="check" data-id="${it.id}" aria-pressed="${!!S.checked[it.id]}">
       <span class="box">${icon('check')}</span>
-      <span class="row-main"><b>${esc(ing.n)}</b><small>${ing.u === 'pc' && ing.pack === 1 ? plural(it.packs, 'pièce', 'pièces') : `${it.packs > 1 ? `${it.packs} × ` : ''}${esc(ing.pl)}`} · ${info}</small></span>
+      <span class="row-main"><b>${esc(ing.n)}</b><small>${unit ? plural(it.packs, 'pièce', 'pièces') : `${it.packs > 1 ? `${it.packs} × ` : ''}${esc(ing.pl)}`} · ${info}</small></span>
       <span class="price">${L.euro(it.cost)}</span></button>`;
   }
   html += `</div>
@@ -459,7 +460,7 @@ function sheetStockEdit({ id }) {
     <div class="stepper"><button class="iconbtn big" data-a="stock-step" data-d="-1" aria-label="Moins">−</button>
       <b>${L.fmtStock(id, S.stock[id] || 0)}</b>
       <button class="iconbtn big" data-a="stock-step" data-d="1" aria-label="Plus">+</button></div>
-    <button class="btn soft" data-a="stock-pack">+ 1 paquet (${esc(ing.pl)})</button>
+    ${ing.u === 'pc' && ing.pack === 1 ? '' : `<button class="btn soft" data-a="stock-pack">+ 1 paquet (${esc(ing.pl)})</button>`}
     <button class="btn danger" data-a="stock-del">Il n'y en a plus</button>
     <button class="btn primary" data-a="close">Terminé</button></div>`;
 }
@@ -780,7 +781,8 @@ const A = {
   'stock-step'(d) {
     const { id } = ui.sheet;
     const q = (S.stock[id] || 0) + Number(d.d) * stockStep(id);
-    if (q <= 0) delete S.stock[id]; else S.stock[id] = q;
+    if (q <= 0) { delete S.stock[id]; closeSheet(); commit({ sheet: false }); return toast('Retiré du placard'); }
+    S.stock[id] = q;
     commit();
   },
   'stock-pack'() { L.addPacks(S.stock, ui.sheet.id, 1); commit(); },

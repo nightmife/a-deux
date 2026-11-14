@@ -79,6 +79,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .ic { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; flex: none; }
 .ic.muted { color: var(--ink3); width: 18px; height: 18px; }
 .ic.ok { color: var(--accent); }
+a { color: inherit; }
 .muted { color: var(--ink2); font-size: 14px; }
 .small { font-size: 13px; }
 .center { text-align: center; }
@@ -86,6 +87,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .stack { display: grid; gap: 10px; }
 .grow { flex: 1; }
 .ok { color: var(--accent); }
+a { color: inherit; }
 
 /* ---------- Structure ---------- */
 
@@ -157,7 +159,8 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .iconbtn.ghost { background: none; pointer-events: none; }
 .iconbtn.big { width: 56px; height: 56px; font-size: 30px; font-weight: 500; line-height: 1; }
 
-.actions { display: grid; grid-template-columns: 1fr 1.25fr; gap: 10px; }
+.actions { display: grid; grid-template-columns: 1fr 1.15fr; gap: 10px; }
+.actions .btn { padding: 0 10px; white-space: nowrap; }
 
 /* ---------- Formulaires ---------- */
 
@@ -316,6 +319,7 @@ button.row:active { background: var(--chip); }
 #sheet.open .backdrop { opacity: 1; }
 #sheet.open .sheet-panel { transform: none; }
 .sheet-body { overflow-y: auto; -webkit-overflow-scrolling: touch; overscroll-behavior: contain; flex: 1; display: flex; flex-direction: column; }
+.sheet-body > * { flex-shrink: 0; }
 .sheet-close { position: absolute; top: 12px; right: 12px; z-index: 2; background: color-mix(in srgb, var(--card) 88%, transparent); -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px); box-shadow: 0 1px 4px rgba(0, 0, 0, .15); }
 .sheet-pad { padding: 26px 18px calc(var(--sab) + 20px); display: grid; gap: 12px; align-content: start; }
 .sheet-pad > h2 { padding-right: 52px; margin: 0; }
@@ -385,8 +389,8 @@ button.row:active { background: var(--chip); }
 /* ---------- Toast ---------- */
 
 #toast {
-  position: absolute; left: 50%; bottom: calc(var(--tabh) + var(--sab) + 22px); z-index: 30;
-  transform: translate(-50%, 20px); opacity: 0; pointer-events: none;
+  position: absolute; left: 50%; top: calc(var(--sat) + 12px); z-index: 30; width: max-content;
+  transform: translate(-50%, -20px); opacity: 0; pointer-events: none;
   background: var(--ink); color: var(--bg); padding: 12px 18px; border-radius: 16px;
   font-size: 15px; font-weight: 650; max-width: calc(100% - 32px); text-align: center;
   transition: transform .25s, opacity .25s; box-shadow: 0 8px 24px rgba(0, 0, 0, .25);

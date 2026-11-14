@@ -64,7 +64,7 @@ def search(q, limit=12):
         lic = clean(m.get('LicenseShortName', {}).get('value'))
         if not lic: continue
         out.append({'title': pg['title'], 'thumb': ii['thumburl'], 'page': ii['descriptionurl'],
-                    'a': clean(m.get('Artist', {}).get('value'))[:60] or 'Wikimedia Commons', 'l': lic})
+                    'a': clean(m.get('Artist', {}).get('value')).split('\n')[0][:50].strip() or 'Wikimedia Commons', 'l': lic})
     return out
 
 def crop(im, w, h):

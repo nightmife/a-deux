@@ -1,0 +1,181 @@
+{
+ "curry-poulet": {
+  "i": 1
+ },
+ "chili": {
+  "i": 0
+ },
+ "bolo": {
+  "i": 3
+ },
+ "carbo": {
+  "i": 0
+ },
+ "dahl": {
+  "i": 1
+ },
+ "saucisses-lentilles": {
+  "i": 1
+ },
+ "tortilla-esp": {
+  "i": 1
+ },
+ "nouilles-poulet": {
+  "i": 0
+ },
+ "nouilles-satay": {
+  "i": 2
+ },
+ "pates-thon": {
+  "i": 0
+ },
+ "pates-champi": {
+  "i": 0
+ },
+ "shakshuka": {
+  "i": 0
+ },
+ "couscous": {
+  "i": 1
+ },
+ "curry-poischiches": {
+  "i": 3
+ },
+ "bowl-thon": {
+  "i": 0
+ },
+ "salade-pates": {
+  "i": 0
+ },
+ "bowl-patate-douce": {
+  "i": 0
+ },
+ "kebab-dinde": {
+  "i": 0
+ },
+ "fajitas": {
+  "i": 1
+ },
+ "quesadillas": {
+  "i": 0
+ },
+ "burger": {
+  "i": 0
+ },
+ "nuggets": {
+  "i": 1
+ },
+ "saumon-riz": {
+  "i": 0
+ },
+ "poisson-pane": {
+  "i": 0
+ },
+ "patates-oeufs": {
+  "i": 1
+ },
+ "pizza-tortilla": {
+  "i": 2
+ },
+ "croque": {
+  "i": 1
+ },
+ "boulettes": {
+  "i": 2
+ },
+ "minestrone": {
+  "i": 0
+ },
+ "omelette-champi": {
+  "i": 1
+ },
+ "riz-dinde": {
+  "i": 2
+ },
+ "dinde-champi": {
+  "i": 2
+ },
+ "tofu-croustillant": {
+  "i": 3
+ },
+ "curry-colin": {
+  "i": 0
+ },
+ "pates-saumon": {
+  "i": 1
+ },
+ "nicoise": {
+  "i": 0
+ },
+ "salade-lentilles": {
+  "i": 0
+ },
+ "taboule": {
+  "i": 0
+ },
+ "saucisses-ecrase": {
+  "i": 2
+ },
+ "poulet-roti": {
+  "i": 2
+ },
+ "curry-tofu": {
+  "i": 0
+ },
+ "brunch": {
+  "i": 0
+ },
+ "riz-haricots": {
+  "i": 3
+ },
+ "pates-chevre": {
+  "i": 0
+ },
+ "poelee-montagnarde": {
+  "i": 0
+ },
+ "riz-cantonais": {
+  "q": "yangzhou fried rice",
+  "i": 0
+ },
+ "poulet-brocoli": {
+  "q": "chicken broccoli rice",
+  "i": 0
+ },
+ "pates-pesto": {
+  "q": "pasta al pesto",
+  "i": 0
+ },
+ "gnocchi-poulet": {
+  "q": "gnocchi",
+  "i": 3
+ },
+ "poulet-moutarde": {
+  "q": "poulet moutarde",
+  "i": 3
+ },
+ "steak-puree": {
+  "q": "hamburger steak mashed potatoes",
+  "i": 1
+ },
+ "poulet-marine": {
+  "q": "chicken skewers",
+  "i": 2
+ },
+ "legumes-rotis": {
+  "q": "roasted vegetables",
+  "i": 1
+ },
+ "veloute": {
+  "q": "pumpkin soup",
+  "i": 1
+ },
+ "patate-farcie": {
+  "q": "baked sweet potato",
+  "i": 1
+ },
+ "pdt-farcie": {
+  "q": "jacket potato",
+  "i": 0
+ }
+}
