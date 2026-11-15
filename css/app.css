@@ -407,3 +407,42 @@ button.row:active { background: var(--chip); }
 @media (prefers-reduced-motion: reduce) {
   * { animation: none !important; transition: none !important; }
 }
+
+/* ---------- Calendrier, prix, budget, notes, recherche, mode cuisine ---------- */
+
+.today { display: flex; align-items: center; gap: 12px; width: 100%; padding: 12px 14px; margin-bottom: 14px; background: var(--accent-soft); box-shadow: none; }
+.today small { color: var(--ink2); font-weight: 650; }
+.today b { display: block; font-size: 17px; }
+.banner .btn.mini { width: auto; flex: none; }
+.btn.mini { min-height: 40px; width: auto; padding: 0 14px; font-size: 14px; border-radius: 12px; }
+.day { font-weight: 700; color: var(--accent); font-size: 12px; }
+.day::first-letter { text-transform: uppercase; }
+.plan-box { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; background: var(--card); border-radius: 16px; padding: 14px; }
+.plan-box .chip { grid-column: 1 / -1; }
+.plan-box input[type="date"] { font-size: 16px; }
+.h-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 12px; }
+.h-row h3 { margin: 0; }
+.filebtn { position: relative; cursor: pointer; }
+.rowbtn { display: flex; align-items: center; gap: 12px; flex: 1; min-width: 0; min-height: 44px; }
+.pricebtn { min-height: 40px; padding: 0 10px; border-radius: 10px; background: var(--chip); }
+.pricebtn.set { background: var(--accent-soft); }
+.row.check { padding-right: 10px; }
+.budget { padding: 14px 16px; display: grid; gap: 8px; margin-bottom: 4px; }
+.budget .bar i { background: var(--accent); }
+.budget.over .bar i { background: var(--danger); }
+.budget.over small { color: var(--danger); }
+.rate { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+.rate button { background: var(--card); border-radius: 18px; padding: 16px 6px; text-align: center; font-size: 38px; line-height: 1.2; box-shadow: var(--shadow); }
+.rate button:active { transform: scale(.95); }
+.rate small { font-size: 13px; font-weight: 650; color: var(--ink); margin-top: 4px; }
+.chips.scroll { flex-wrap: nowrap; overflow-x: auto; margin: 0 -18px; padding: 2px 18px; scrollbar-width: none; }
+.chips.scroll::-webkit-scrollbar { display: none; }
+.chips.scroll .chip { white-space: nowrap; flex: none; }
+.cook .eyebrow { margin: 0; font-size: 13px; font-weight: 650; color: var(--ink2); padding-right: 52px; }
+.dots.wide { gap: 4px; }
+.dots.wide i { flex: 1; width: auto; }
+.bigstep { font-size: 24px; line-height: 1.4; font-weight: 500; margin: 8px 0; }
+.timers { display: grid; gap: 8px; }
+.timer { display: flex; align-items: center; justify-content: space-between; gap: 10px; background: var(--warn-soft); color: var(--warn-ink); border-radius: 14px; padding: 10px 14px; font-weight: 650; }
+.timer b { font-size: 22px; font-variant-numeric: tabular-nums; margin-left: auto; }
+.cook-ings summary { font-weight: 700; padding: 10px 2px; cursor: pointer; }

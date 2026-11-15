@@ -143,3 +143,36 @@ test('plats assemblés : proportions gardées (2 tranches de pain par croque)', 
   const b = L.needs(RECIPE_BY_ID.burger, people);
   assert.equal(b.painburger, 2);
 });
+
+test('prix réels, double portion, budget, notes', () => {
+  const r = RECIPE_BY_ID['curry-poulet'];
+  const base = L.shopping(['curry-poulet'], people, {}).total;
+  L.setPrices({ poulet: 9.9 });
+  assert.ok(Math.abs(L.shopping(['curry-poulet'], people, {}).total - (base + 4)) < 1e-9);
+  L.setPrices({});
+  const one = L.needs(r, people), two = L.needs(r, people, 2);
+  assert.ok(two.poulet > one.poulet * 1.8 && two.riz > one.riz * 1.8);
+  assert.ok(L.shopping(['curry-poulet'], people, {}, { 'curry-poulet': 2 }).total >= base);
+  const stock = { riz: 1000 };
+  L.cook(stock, r, people, 2);
+  assert.ok(Math.abs(stock.riz - (1000 - two.riz)) < 1e-9);
+
+  const state = { people, equip: ['pl', 'af'], avoid: [], stock: {}, menu: [], history: [], disliked: [] };
+  const menu = L.planMenu({ ...state, budget: 25 }, 7, () => 0.5);
+  assert.ok(menu.length >= 3 && menu.length <= 7);
+  assert.ok(L.shopping(menu, people, {}).total <= 25);
+
+  const sans = L.rankRecipes(state, () => 0);
+  const avec = L.rankRecipes({ ...state, ratings: { saumon_x: 1, 'saumon-riz': 1 } }, () => 0);
+  assert.ok(avec.indexOf('saumon-riz') < sans.indexOf('saumon-riz'));
+});
+
+test('collations : proches du reste de calories, adaptées à l objectif', () => {
+  for (const p of people) {
+    const s = L.snackPlan(p, 3);
+    assert.ok(s.picks.length >= 2);
+    assert.ok(s.kcal <= s.left * 1.08 && s.kcal >= s.left * 0.6, `${p.name} ${s.kcal}/${s.left}`);
+  }
+  assert.ok(L.snackPlan(elle).picks.every((x) => x.g >= 0));
+  assert.ok(L.snackPlan(lui).picks.every((x) => x.g <= 0));
+});

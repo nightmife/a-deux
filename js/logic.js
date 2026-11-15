@@ -1,5 +1,10 @@
 // Logique pure (sans DOM) : besoins caloriques, portions, placard, courses, suggestions.
-import { INGREDIENTS as ING, RECIPES, RECIPE_BY_ID, AVOID, BOOST_CAP, CATS } from './data.js';
+import { INGREDIENTS as ING, RECIPES, RECIPE_BY_ID, AVOID, BOOST_CAP, CATS, SNACKS } from './data.js';
+
+// Prix réels saisis par le foyer (par paquet) ; à défaut, prix estimé du catalogue.
+let PRICES = {};
+export const setPrices = (m) => { PRICES = m || {}; };
+export const priceOf = (id) => (PRICES[id] > 0 ? PRICES[id] : ING[id].pr);
 
 export const ACTIVITY = {
   sed: { n: 'Sédentaire (peu de marche)', f: 1.2 },
@@ -82,7 +87,7 @@ export function portion(recipe, person) {
       const b = recipe.boost;
       const dens = kcalOf(b, 1);
       const q = Math.min(BOOST_CAP[b] ?? 15, (T - total) / dens);
-      if (q * dens >= 25) {
+      if (q * dens >= 45) {
         items.push({ id: b, role: 'f', q, boost: true });
         boostK = q * dens;
       }
@@ -114,10 +119,11 @@ export function roundQty(id, q) {
 }
 
 // Quantités totales à cuisiner pour tout le foyer : { id: quantité }.
-export function needs(recipe, people) {
+// k : nombre de repas cuisinés d'un coup (2 = double portion).
+export function needs(recipe, people, k = 1) {
   const raw = {};
   for (const p of people) {
-    for (const it of portion(recipe, p).items) raw[it.id] = (raw[it.id] || 0) + it.q;
+    for (const it of portion(recipe, p).items) raw[it.id] = (raw[it.id] || 0) + it.q * k;
   }
   const out = {};
   for (const id of Object.keys(raw)) {
@@ -131,12 +137,12 @@ export function needs(recipe, people) {
   return out;
 }
 
-export function menuNeeds(menuIds, people) {
+export function menuNeeds(menuIds, people, mult = {}) {
   const total = {};
   for (const rid of menuIds) {
     const r = RECIPE_BY_ID[rid];
     if (!r) continue;
-    const n = needs(r, people);
+    const n = needs(r, people, mult[rid] || 1);
     for (const id of Object.keys(n)) total[id] = (total[id] || 0) + n[id];
   }
   return total;
@@ -146,8 +152,8 @@ const EPS = 1e-6;
 const CAT_ORDER = Object.keys(CATS);
 
 // Liste de courses : ce qui manque au placard, converti en paquets vendus.
-export function shopping(menuIds, people, stock) {
-  const need = menuNeeds(menuIds, people);
+export function shopping(menuIds, people, stock, mult = {}) {
+  const need = menuNeeds(menuIds, people, mult);
   const items = [];
   for (const id of Object.keys(need)) {
     const have = stock[id] || 0;
@@ -157,7 +163,7 @@ export function shopping(menuIds, people, stock) {
     const packs = Math.ceil(miss / ing.pack - EPS);
     items.push({
       id, need: need[id], have, packs,
-      cost: packs * ing.pr,
+      cost: packs * priceOf(id),
       left: have + packs * ing.pack - need[id],
     });
   }
@@ -167,8 +173,8 @@ export function shopping(menuIds, people, stock) {
 }
 
 // Ce qu'il restera au placard une fois le menu acheté et cuisiné.
-export function leftovers(menuIds, people, stock) {
-  const need = menuNeeds(menuIds, people);
+export function leftovers(menuIds, people, stock, mult = {}) {
+  const need = menuNeeds(menuIds, people, mult);
   const out = { ...stock };
   for (const id of Object.keys(need)) {
     const have = stock[id] || 0;
@@ -182,7 +188,7 @@ export function leftovers(menuIds, people, stock) {
 // Coût réel du repas (au prorata de ce qui est utilisé), pour tout le foyer.
 export function mealCost(recipe, people) {
   const n = needs(recipe, people);
-  return Object.keys(n).reduce((s, id) => s + (n[id] / ING[id].pack) * ING[id].pr, 0);
+  return Object.keys(n).reduce((s, id) => s + (n[id] / ING[id].pack) * priceOf(id), 0);
 }
 
 export function addPacks(stock, id, packs = 1) {
@@ -190,8 +196,8 @@ export function addPacks(stock, id, packs = 1) {
 }
 
 // Retire du placard ce que la recette consomme ; un ingrédient fini disparaît.
-export function cook(stock, recipe, people) {
-  const n = needs(recipe, people);
+export function cook(stock, recipe, people, k = 1) {
+  const n = needs(recipe, people, k);
   for (const id of Object.keys(n)) {
     if (!(id in stock)) continue;
     const rest = stock[id] - n[id];
@@ -211,8 +217,8 @@ const mainProtein = (r) => (r.ing.find((it) => it.role === 'p') || r.ing[0]).id;
 // Recettes proposables, de la plus intéressante à la moins intéressante :
 // peu à acheter, utilise les restes du placard, pas cuisinée récemment.
 export function rankRecipes(state, rng = Math.random) {
-  const { people, equip, avoid, stock, menu, history, disliked } = state;
-  const rest = leftovers(menu, people, stock);
+  const { people, equip, avoid, stock, menu, history, disliked, mult = {}, ratings = {} } = state;
+  const rest = leftovers(menu, people, stock, mult);
   const menuProteins = menu.map((id) => RECIPE_BY_ID[id]).filter(Boolean).map(mainProtein);
   const recent = history.slice(-8).map((h) => h.id).reverse();
 
@@ -227,6 +233,7 @@ export function rankRecipes(state, rng = Math.random) {
         + 0.5 * (mealCost(r, people) / people.length)
         - 0.4 * reused
         + (ri >= 0 ? 4 - 0.4 * ri : 0)
+        - (ratings[r.id] === 1 ? 1.2 : 0)
         + 1.5 * menuProteins.filter((p) => p === mainProtein(r)).length
         + rng() * 1.5;
       return { id: r.id, score };
@@ -242,13 +249,35 @@ export const isFresh = (recipe) => recipe.ing.some((it) => FRESH.has(it.id));
 // Complète le menu jusqu'à n repas : plats variés, qui réutilisent les mêmes paquets. Les plats frais en premier.
 export function planMenu(state, n, rng = Math.random) {
   const menu = [...state.menu];
+  const { people, stock, mult = {}, budget } = state;
   while (menu.length < n) {
-    const pick = rankRecipes({ ...state, menu }, rng)[0];
+    const ranked = rankRecipes({ ...state, menu }, rng);
+    // Avec un budget : on prend la meilleure recette qui ne fait pas dépasser le total des courses.
+    const pick = budget > 0
+      ? ranked.find((id) => shopping([...menu, id], people, stock, mult).total <= budget)
+      : ranked[0];
     if (!pick) break;
     menu.push(pick);
   }
   const fresh = (id) => (RECIPE_BY_ID[id] && isFresh(RECIPE_BY_ID[id]) ? 0 : 1);
   return menu.map((id, i) => [id, i]).sort((a, b) => fresh(a[0]) - fresh(b[0]) || a[1] - b[1]).map((x) => x[0]);
+}
+
+// Idées pour les calories hors repas principaux (petit-déjeuner + collations), selon l'objectif.
+export function snackPlan(person, seed = 0) {
+  const t = targets(person);
+  const left = Math.round((t.kcal - 2 * t.meal) / 10) * 10;
+  const sign = { loss: -1, gain: 1, keep: 0 }[t.mode];
+  const fits = (s) => sign === 0 || s.g === 0 || s.g === sign;
+  const rot = (arr) => arr.map((_, i) => arr[(i + seed) % arr.length]);
+  const morning = SNACKS.filter((s) => s.t === 'm' && fits(s)).sort((a, b) => Math.abs(a.k - left * 0.55) - Math.abs(b.k - left * 0.55));
+  const picks = morning.length ? [morning[seed % Math.min(2, morning.length)]] : [];
+  let sum = picks.reduce((s, x) => s + x.k, 0);
+  for (const s of rot(SNACKS.filter((x) => x.t === 's' && fits(x)))) {
+    if (picks.length >= 4) break;
+    if (sum + s.k <= left * 1.08) { picks.push(s); sum += s.k; }
+  }
+  return { left, picks, kcal: sum, prot: picks.reduce((s, x) => s + x.p, 0), all: SNACKS.filter(fits) };
 }
 
 // ---------- Suivi du poids ----------

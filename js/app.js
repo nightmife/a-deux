@@ -1,8 +1,9 @@
-import { INGREDIENTS as ING, RECIPE_BY_ID, CATS, EQUIPMENT, AVOID } from './data.js';
+import { INGREDIENTS as ING, RECIPES, RECIPE_BY_ID, CATS, EQUIPMENT, AVOID } from './data.js';
 import * as L from './logic.js';
 import { PHOTOS } from './photos.js';
 import { SYNC } from './config.js';
 import { createSync, formatCode } from './sync.js';
+import { photoDb, shrinkPhoto, isPhotoData, primeAudio, beep, keepAwake } from './device.js';
 
 // ---------- État ----------
 
@@ -10,6 +11,7 @@ const KEY = 'adeux.v1';
 const blank = () => ({
   v: 1, onboarded: false, people: [], equip: ['pl'], avoid: [], stock: {},
   menu: [], checked: {}, history: [], disliked: [], skipped: [], current: null,
+  days: {}, mult: {}, prices: {}, budget: null, spend: [], ratings: {}, photos: {},
 });
 
 function sanitize(raw) {
@@ -22,6 +24,14 @@ function sanitize(raw) {
   s.equip = s.equip.filter((e) => EQUIPMENT[e]);
   s.avoid = s.avoid.filter((a) => AVOID[a]);
   s.stock = Object.fromEntries(Object.entries(s.stock).filter(([id, q]) => ING[id] && q > 0));
+  for (const k of ['days', 'mult', 'prices', 'ratings', 'photos', 'checked']) {
+    if (!s[k] || typeof s[k] !== 'object' || Array.isArray(s[k])) s[k] = {};
+  }
+  for (const k of ['days', 'mult']) for (const id of Object.keys(s[k])) if (!s.menu.includes(id)) delete s[k][id];
+  for (const id of Object.keys(s.days)) if (!s.days[id] || !/^\d{4}-\d\d-\d\d$/.test(s.days[id].d)) delete s.days[id];
+  for (const id of Object.keys(s.prices)) if (!ING[id] || !(s.prices[id] > 0)) delete s.prices[id];
+  if (!Array.isArray(s.spend)) s.spend = [];
+  s.budget = s.budget > 0 ? Number(s.budget) : null;
   s.people = s.people.filter((p) => p && p.id && p.weight > 0 && p.height > 0 && Array.isArray(p.weighIns));
   for (const p of s.people) {
     p.weighIns = p.weighIns.filter((x) => x && x.d && x.w > 0).sort((a, b) => a.d.localeCompare(b.d));
@@ -73,9 +83,11 @@ function applyRemote(state) {
     const { type, id } = ui.sheet;
     const gone = (['weigh', 'history'].includes(type) || (type === 'person' && id)) && personIndex(id) < 0;
     if (gone) closeSheet();
+    else if (type === 'recipe' && !RECIPE_BY_ID[id]) closeSheet();
     else if (['recipe', 'stockEdit', 'history'].includes(type)) renderSheet();
   }
   render();
+  syncPhotos();
 }
 
 const sync = SYNC.url && SYNC.key ? createSync({
@@ -93,7 +105,8 @@ const sync = SYNC.url && SYNC.key ? createSync({
   onStatus: () => { if (S.onboarded && ui.tab === 'settings') render(); },
 }) : null;
 
-const ui = { tab: 'ideas', ob: null, draft: null, sheet: null, sel: {}, anim: false };
+const ui = { tab: 'ideas', ob: null, draft: null, sheet: null, sel: {}, anim: false, timers: [] };
+let userPhotos = {}; // photos prises par le foyer, chargées depuis IndexedDB
 
 // ---------- Utilitaires ----------
 
@@ -107,6 +120,7 @@ const fmtDate = (d, opt = { day: 'numeric', month: 'short' }) => {
   const [y, m, dd] = d.split('-').map(Number);
   return new Date(y, m - 1, dd).toLocaleDateString('fr-FR', opt);
 };
+const norm = (x) => String(x).toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
 const hue = (id) => [...id].reduce((h, c) => (h * 31 + c.charCodeAt(0)) % 360, 7);
 const plural = (n, one, many) => `${n} ${n > 1 ? many : one}`;
 const personIndex = (id) => S.people.findIndex((p) => p.id === id);
@@ -126,17 +140,19 @@ const ICON = {
 };
 const icon = (n, cls = '') => `<svg class="ic ${cls}" viewBox="0 0 24 24" aria-hidden="true">${ICON[n]}</svg>`;
 
-function toast(msg) {
+function toast(msg, ms = 2600) {
   const t = $('#toast');
   t.textContent = msg;
   t.classList.add('show');
   clearTimeout(toast.t);
-  toast.t = setTimeout(() => t.classList.remove('show'), 2600);
+  toast.t = setTimeout(() => t.classList.remove('show'), ms);
 }
 
 function media(r, cls = '') {
-  const img = PHOTOS[r.id]
-    ? `<img src="img/recipes/${r.id}.jpg" alt="" loading="lazy" onerror="this.remove()">` : '';
+  const mine = S.photos[r.id] && userPhotos[r.id];
+  let img = '';
+  if (mine) img = `<img src="${mine.data}" alt="">`;
+  else if (PHOTOS[r.id]) img = `<img src="img/recipes/${r.id}.jpg" alt="" loading="lazy" onerror="this.remove()">`;
   return `<div class="media ${cls}" style="--h:${hue(r.id)}"><span class="media-emoji">${r.emoji}</span>${img}</div>`;
 }
 
@@ -300,6 +316,47 @@ function obNext() {
 
 // ---------- Onglet Recettes ----------
 
+const addDays = (d, n) => {
+  const [y, m, dd] = d.split('-').map(Number);
+  const x = new Date(y, m - 1, dd + n);
+  return `${x.getFullYear()}-${String(x.getMonth() + 1).padStart(2, '0')}-${String(x.getDate()).padStart(2, '0')}`;
+};
+const slotKey = (id) => (S.days[id] ? `${S.days[id].d}${S.days[id].s === 'midi' ? 'a' : 'b'}` : '9999');
+const menuSorted = () => [...S.menu].sort((a, b) => slotKey(a).localeCompare(slotKey(b)));
+
+function dayLabel(id) {
+  const s = S.days[id];
+  if (!s) return 'Sans date';
+  const t = L.today();
+  let name = fmtDate(s.d, { weekday: 'long', day: 'numeric' });
+  if (s.d === t) name = "Aujourd'hui";
+  else if (s.d === addDays(t, 1)) name = 'Demain';
+  else if (s.d < t) name = `En retard (${fmtDate(s.d)})`;
+  return `${name} · ${s.s}`;
+}
+
+// Prochains créneaux libres du calendrier (un par jour le soir, ou midi et soir).
+function freeSlots(count, perDay = 1) {
+  const used = new Set(Object.values(S.days).map((s) => s.d + s.s));
+  const out = [];
+  for (let i = 0; out.length < count && i < 90; i += 1) {
+    const d = addDays(L.today(), i);
+    for (const s of perDay === 2 ? ['midi', 'soir'] : ['soir']) {
+      if (!used.has(d + s) && out.length < count) out.push({ d, s });
+    }
+  }
+  return out;
+}
+
+function dropFromMenu(id) {
+  S.menu = S.menu.filter((x) => x !== id);
+  delete S.days[id]; delete S.mult[id];
+}
+
+const monday = () => { const d = new Date(); return addDays(L.today(), -((d.getDay() + 6) % 7)); };
+const weekSpend = () => S.spend.filter((x) => x.d >= monday()).reduce((a, x) => a + x.a, 0);
+const monthSpend = () => S.spend.filter((x) => x.d.startsWith(L.today().slice(0, 7))).reduce((a, x) => a + x.a, 0);
+
 function ensureCurrent() {
   const ok = (id) => id && RECIPE_BY_ID[id] && !S.menu.includes(id) && !S.disliked.includes(id)
     && L.recipeAllowed(RECIPE_BY_ID[id], S.equip, S.avoid);
@@ -338,23 +395,36 @@ function viewIdeas() {
       <button class="iconbtn" data-a="hide-install" aria-label="Fermer">${icon('close')}</button></div>`;
   }
 
+  const todays = menuSorted().filter((mid) => S.days[mid]?.d === L.today());
+  for (const mid of todays) {
+    html += `<button class="card today" data-a="recipe" data-id="${mid}">${media(RECIPE_BY_ID[mid], 'thumb')}
+      <span class="row-main"><small>Au programme ${S.days[mid].s === 'midi' ? 'ce midi' : 'ce soir'}</small><b>${esc(RECIPE_BY_ID[mid].name)}</b></span>${icon('chev', 'muted')}</button>`;
+  }
+  const late = S.people.filter((p) => p.weighIns[p.weighIns.length - 1].d <= addDays(L.today(), -7));
+  if (late.length && localStorage.getItem('adeux.nag') !== L.today()) {
+    html += `<div class="card banner"><div><b>⚖️ Pesée de la semaine</b>
+      <small>${late.map((p) => esc(p.name)).join(' et ')} : plus de 7 jours sans pesée. Les portions suivent ton poids.</small></div>
+      <button class="btn primary mini" data-a="tab" data-tab="track">Peser</button>
+      <button class="iconbtn" data-a="hide-nag" aria-label="Plus tard">${icon('close')}</button></div>`;
+  }
+
   if (!id) {
     html += `<div class="empty"><div class="big">🤷</div><h2>Aucune recette à proposer</h2>
       <p>Avec ces réglages, il ne reste plus de recette. Ajoute du matériel ou retire des exclusions.</p>
       <button class="btn primary" data-a="tab" data-tab="settings">Ouvrir les réglages</button></div>`;
   } else {
     const r = RECIPE_BY_ID[id];
-    const rest = L.leftovers(S.menu, S.people, S.stock);
+    const rest = L.leftovers(S.menu, S.people, S.stock, S.mult);
     const buy = L.shopping([id], S.people, rest);
     const n = Object.keys(L.needs(r, S.people)).length;
     const have = n - buy.items.length;
     const buyLine = buy.items.length
-      ? `<b>${L.euro(buy.total)}</b> à acheter · ${have ? `${have} sur ${n} ingrédients déjà au placard` : `${plural(n, 'ingrédient', 'ingrédients')}`}`
+      ? `<b>${L.euro(buy.total)}</b> en caisse (paquets entiers) · ${have ? `${have} sur ${n} ingrédients déjà au placard` : `${plural(n, 'ingrédient', 'ingrédients')}`}`
       : '<b>Rien à acheter</b> · tout est déjà au placard';
     html += `<article class="card recipe ${ui.anim ? 'swap' : ''}">
         <button class="recipe-open" data-a="recipe" data-id="${id}" aria-label="Voir la recette">
           ${media(r, 'hero')}
-          <div class="recipe-body"><h2>${esc(r.name)}</h2>${metaChips(r)}
+          <div class="recipe-body"><h2>${S.ratings[id] === 1 ? '❤️ ' : ''}${esc(r.name)}</h2>${metaChips(r)}
             <div class="plines">${personLines(r)}</div>
             <p class="buy ${buy.items.length ? '' : 'ok'}">🛒 ${buyLine}</p>
             <span class="see">Voir la recette ${icon('chev')}</span></div>
@@ -365,18 +435,19 @@ function viewIdeas() {
         </div></article>`;
   }
 
+  html += '<button class="btn soft plan" data-a="browse">🔍 Chercher dans toutes les recettes</button>';
   html += `<h3 class="section" id="menu">Au menu${S.menu.length ? ` · ${plural(S.menu.length, 'repas', 'repas')}` : ''}</h3>`;
   if (id) html += `<button class="btn soft plan" data-a="plan-open">📅 Planifier plusieurs repas d'un coup</button>`;
   if (!S.menu.length) {
     html += '<p class="muted pad">Ajoute les recettes qui te plaisent, ou laisse l\'app composer le menu de la semaine : la liste de courses se remplit toute seule.</p>';
   } else {
-    const shop = L.shopping(S.menu, S.people, S.stock);
-    html += `<div class="list">${S.menu.map((mid) => {
+    const shop = L.shopping(S.menu, S.people, S.stock, S.mult);
+    html += `<div class="list">${menuSorted().map((mid) => {
       const r = RECIPE_BY_ID[mid];
-      const miss = L.shopping([mid], S.people, S.stock).items.length;
+      const miss = L.shopping([mid], S.people, S.stock, S.mult).items.length;
       const fresh = L.isFresh(r) ? ' · frais, à cuisiner en premier' : '';
       return `<button class="row" data-a="recipe" data-id="${mid}">${media(r, 'thumb')}
-        <span class="row-main"><b>${esc(r.name)}</b>
+        <span class="row-main"><small class="day">${dayLabel(mid)}${S.mult[mid] === 2 ? ' · en double' : ''}</small><b>${esc(r.name)}</b>
         <small class="${miss ? '' : 'ok'}">${miss ? `🛒 ${plural(miss, 'ingrédient', 'ingrédients')} à acheter${fresh}` : '✓ Prêt à cuisiner'}</small></span>${icon('chev', 'muted')}</button>`;
     }).join('')}
       <button class="row" data-a="tab" data-tab="shop"><span class="row-main"><b>${shop.items.length ? `Courses pour tout le menu : ${L.euro(shop.total)}` : 'Tout est au placard'}</b>
@@ -393,8 +464,20 @@ function sheetRecipe({ id, who: whoRaw = 'all' }) {
   const r = RECIPE_BY_ID[id];
   const inMenu = S.menu.includes(id);
   const portions = S.people.map((p) => L.portion(r, p));
-  const total = L.needs(r, S.people);
+  const k = inMenu ? (S.mult[id] || 1) : 1;
+  const total = L.needs(r, S.people, k);
   const multi = S.people.length > 1;
+  const mine = S.photos[id] && userPhotos[id];
+  const cost = L.mealCost(r, S.people) * k;
+  const buyNow = L.shopping([id], S.people, inMenu ? S.stock : L.leftovers(S.menu, S.people, S.stock, S.mult), { [id]: k });
+  const priceBlock = `<p class="hint">💶 <b>${L.euro(cost)}</b> de nourriture réellement utilisée, soit ${L.euro(cost / S.people.length / k)} par personne${k > 1 ? ' et par repas' : ''}.
+    ${buyNow.items.length ? `En caisse : <b>${L.euro(buyNow.total)}</b>, parce qu'on achète des paquets entiers. Ce qui n'est pas utilisé reste au placard pour d'autres recettes.` : 'Rien à acheter : tout est déjà au placard.'}</p>`;
+  const day = S.days[id];
+  const planBlock = !inMenu ? '' : `<div class="plan-box">
+      <label class="field"><span>Prévu le</span><div class="input"><input type="date" data-c="day-date" data-id="${id}" value="${day?.d || ''}"></div></label>
+      <div class="field"><span>Repas</span><div class="seg">${['midi', 'soir'].map((v) =>
+    `<button class="${(day?.s || 'soir') === v ? 'on' : ''}" data-a="day-slot" data-id="${id}" data-v="${v}">${v[0].toUpperCase()}${v.slice(1)}</button>`).join('')}</div></div>
+      <button class="chip ${k === 2 ? 'on' : ''}" data-a="double" data-id="${id}">Cuisiner en double, pour 2 repas</button></div>`;
 
   let rows;
   if (who === 'all') {
@@ -449,7 +532,9 @@ function sheetRecipe({ id, who: whoRaw = 'all' }) {
 
   return `${media(r, 'cover')}
     <div class="sheet-pad">
-      <h2>${esc(r.name)}</h2>${metaChips(r)}
+      <h2>${S.ratings[id] === 1 ? '❤️ ' : ''}${esc(r.name)}</h2>${metaChips(r)}
+      ${planBlock}${priceBlock}
+      ${k > 1 ? '<p class="hint">Quantités pour <b>2 repas</b> : mange la moitié, garde le reste au frais pour le lendemain.</p>' : ''}
       ${r.unit ? `<p class="hint">Ça fait <b>${unitLabel(total[r.unit[1]] / r.unit[2])}</b> en tout.</p>` : ''}
       <h3>Dans l'assiette</h3><div class="plates">${plates}</div>
       <h3>Ingrédients</h3>
@@ -457,9 +542,11 @@ function sheetRecipe({ id, who: whoRaw = 'all' }) {
     `<button class="${who === v ? 'on' : ''}" data-a="who" data-v="${v}">${lab}</button>`).join('')}</div>` : ''}
       <ul class="ings">${rows}</ul>
       <p class="muted small">Sel, poivre et eau ne sont pas listés.</p>
-      <h3>Préparation</h3>
+      <div class="h-row"><h3>Préparation</h3><button class="btn soft mini" data-a="cookmode" data-id="${id}">👨‍🍳 Mode cuisine</button></div>
       <ol class="steps">${steps.map((s) => `<li>${s}</li>`).join('')}</ol>
-      ${PHOTOS[r.id] ? `<p class="muted small">Photo d'illustration : <a href="${esc(PHOTOS[r.id].u)}" target="_blank" rel="noopener">${esc(PHOTOS[r.id].a)}</a>, ${esc(PHOTOS[r.id].l)}, via Wikimedia Commons</p>` : ''}
+      <label class="btn soft filebtn">📷 ${mine ? 'Changer notre photo' : 'Mettre notre photo du plat'}<input type="file" accept="image/*" data-c="photo" data-id="${id}" hidden></label>
+      ${mine ? `<button class="btn text" data-a="photo-del" data-id="${id}">Remettre la photo d'origine</button>` : ''}
+      ${mine ? '<p class="muted small">Photo : la vôtre.</p>' : !PHOTOS[r.id] ? '' : `<p class="muted small">Photo d'illustration : <a href="${esc(PHOTOS[r.id].u)}" target="_blank" rel="noopener">${esc(PHOTOS[r.id].a)}</a>, ${esc(PHOTOS[r.id].l)}, via Wikimedia Commons</p>`}
     </div>
     <div class="sheet-foot">${foot}</div>`;
 }
@@ -472,8 +559,147 @@ function sheetPlan({ n }) {
       <b>${n} repas</b>
       <button class="iconbtn big" data-a="plan-n" data-d="1" aria-label="Plus">+</button></div>
     <p class="muted small center">${S.menu.length ? `${plural(S.menu.length, 'repas déjà au menu', 'repas déjà au menu')}, ${add} à ajouter.` : 'Un repas = un plat pour tout le foyer (7 = un dîner par jour, 14 = midi et soir).'}
-      Tu pourras remplacer ou retirer chaque plat ensuite.</p>
+      Tu pourras remplacer ou retirer chaque plat ensuite.${S.budget ? ` Budget pris en compte : ${L.euro(S.budget)} par semaine.` : ''}</p>
     <button class="btn primary" data-a="plan-do" ${add ? '' : 'disabled'}>${add ? `Composer ${plural(add, 'repas', 'repas')}` : 'Menu déjà complet'}</button></div>`;
+}
+
+function sheetPrice({ id, err }) {
+  const ing = ING[id];
+  return `<form class="sheet-pad form" data-a-submit="price-save"><h2>Prix : ${esc(ing.n)}</h2>
+    <p class="muted">Indique le prix payé en magasin pour : <b>${esc(ing.pl)}</b>. L'app s'en servira pour tous ses calculs.</p>
+    <label class="field ${err ? 'bad' : ''}"><span>Prix du paquet</span><div class="input">
+      <input id="pr-val" inputmode="decimal" autocomplete="off" value="${L.priceOf(id).toFixed(2).replace('.', ',')}"><i>€</i></div>
+      ${err ? `<em>${err}</em>` : ''}</label>
+    <button class="btn primary" type="submit">Enregistrer</button>
+    ${S.prices[id] ? `<button class="btn text" type="button" data-a="price-reset">Revenir au prix estimé (${L.euro(ing.pr)})</button>` : ''}</form>`;
+}
+
+function sheetBudget({ err }) {
+  return `<form class="sheet-pad form" data-a-submit="budget-save"><h2>Budget courses</h2>
+    <p class="muted">Un montant par semaine pour tout le foyer. La planification des repas s'arrête avant de le dépasser, et l'onglet Courses te montre où tu en es.</p>
+    <label class="field ${err ? 'bad' : ''}"><span>Budget par semaine</span><div class="input">
+      <input id="bu-val" inputmode="decimal" autocomplete="off" placeholder="60" value="${S.budget ? String(S.budget).replace('.', ',') : ''}"><i>€</i></div>
+      ${err ? `<em>${err}</em>` : ''}</label>
+    <button class="btn primary" type="submit">Enregistrer</button>
+    ${S.budget ? '<button class="btn text" type="button" data-a="budget-clear">Ne plus fixer de budget</button>' : ''}</form>`;
+}
+
+function sheetRate({ id }) {
+  return `<div class="sheet-pad"><h2>Alors, ce plat ?</h2><p class="muted">${esc(RECIPE_BY_ID[id].name)}</p>
+    <div class="rate"><button data-a="rate" data-v="1">😍<small>On adore</small></button>
+      <button data-a="rate" data-v="0">🙂<small>Correct</small></button>
+      <button data-a="rate" data-v="-1">👎<small>Plus jamais</small></button></div>
+    <label class="btn soft filebtn">📷 ${S.photos[id] && userPhotos[id] ? 'Photo ajoutée ✓ (changer)' : 'Ajouter notre photo du plat'}<input type="file" accept="image/*" data-c="photo" data-id="${id}" hidden></label>
+    <button class="btn text" data-a="close">Passer</button></div>`;
+}
+
+function sheetSnacks({ id }) {
+  const p = S.people[personIndex(id)];
+  const seed = Math.floor(Date.now() / 864e5);
+  const sp = L.snackPlan(p, seed);
+  const row = (x) => `<div class="row static"><span class="row-main"><b>${esc(x.n)}</b>
+    <small>${x.t === 'm' ? 'Petit-déjeuner' : 'Collation'} · ${x.p} g de protéines</small></span><span class="price">${x.k} kcal</span></div>`;
+  return `<div class="sheet-pad"><h2>En dehors des repas</h2>
+    <p class="muted">Les deux repas principaux couvrent environ 70 % des besoins de ${esc(p.name)}. Il reste à peu près <b>${int(sp.left)} kcal</b> pour le petit-déjeuner et les collations.</p>
+    <h3>Exemple pour aujourd'hui · ${int(sp.kcal)} kcal</h3><div class="list">${sp.picks.map(row).join('')}</div>
+    <h3>Autres idées adaptées</h3><div class="list">${sp.all.filter((x) => !sp.picks.includes(x)).map(row).join('')}</div>
+    <p class="muted small">Ces idées ne sont pas ajoutées à la liste de courses.</p>
+    <button class="btn primary" data-a="close">Fermer</button></div>`;
+}
+
+const FILTERS = [['fav', '❤️ Favoris'], ['rapide', '⏱ 20 min max'], ['placard', '🧺 Avec mon placard'], ['vege', '🥦 Sans viande ni poisson'], ['af', '🌬️ Air fryer']];
+
+function sheetBrowse({ f = [], q = '' }) {
+  const has = (x) => f.includes(x);
+  let list = RECIPES.filter((r) => !S.disliked.includes(r.id) && L.recipeAllowed(r, S.equip, S.avoid));
+  if (has('fav')) list = list.filter((r) => S.ratings[r.id] === 1);
+  if (has('rapide')) list = list.filter((r) => r.time <= 20);
+  if (has('vege')) list = list.filter((r) => !r.ing.some((it) => ING[it.id].kind));
+  if (has('af')) list = list.filter((r) => r.equip.some((g) => g.includes('af')));
+  const rows = list.map((r) => ({ r, miss: L.shopping([r.id], S.people, S.stock).items.length }));
+  if (has('placard')) rows.sort((a, b) => a.miss - b.miss || a.r.name.localeCompare(b.r.name, 'fr'));
+  else rows.sort((a, b) => a.r.name.localeCompare(b.r.name, 'fr'));
+  const chips = FILTERS.filter(([id]) => id !== 'af' || S.equip.includes('af')).map(([id, label]) =>
+    `<button class="chip ${has(id) ? 'on' : ''}" data-a="browse-f" data-id="${id}">${label}</button>`).join('');
+  const nq = norm(q);
+  return `<div class="sheet-pad"><h2>Toutes les recettes</h2>
+    <div class="input search"><input type="search" id="bq" data-list="browse-list" value="${esc(q)}" placeholder="Un plat ou un ingrédient (poulet, riz…)" autocomplete="off"></div>
+    <div class="chips scroll">${chips}</div>
+    <div class="list" id="browse-list">${rows.map(({ r, miss }) => {
+    const name = `${r.name} ${r.ing.map((it) => ING[it.id].n).join(' ')}`;
+    return `<button class="row" data-a="recipe" data-id="${r.id}" data-name="${esc(name)}" ${nq && !norm(name).includes(nq) ? 'hidden' : ''}>${media(r, 'thumb')}
+        <span class="row-main"><b>${S.ratings[r.id] === 1 ? '❤️ ' : ''}${esc(r.name)}</b>
+        <small>${r.time} min · ${L.euro(L.mealCost(r, S.people) / S.people.length)} / pers. · ${S.menu.includes(r.id) ? 'déjà au menu' : miss ? `${miss} à acheter` : 'tout au placard'}</small></span>${icon('chev', 'muted')}</button>`;
+  }).join('') || '<p class="muted pad">Aucune recette ne correspond à ces filtres.</p>'}</div></div>`;
+}
+
+const clock = (ms) => {
+  const sec = Math.max(0, Math.ceil(ms / 1000));
+  return `${Math.floor(sec / 60)}:${String(sec % 60).padStart(2, '0')}`;
+};
+
+function sheetCook({ id, i = 0 }) {
+  const r = RECIPE_BY_ID[id];
+  const inMenu = S.menu.includes(id);
+  const total = L.needs(r, S.people, inMenu ? (S.mult[id] || 1) : 1);
+  const n = r.steps.length;
+  const mins = [...new Set([...r.steps[i].matchAll(/(\d+)(?:\s*à\s*\d+)?\s*min/g)].map((m) => Number(m[1])))];
+  const now = Date.now();
+  return `<div class="sheet-pad cook"><p class="eyebrow">${esc(r.name)}</p><h2>Étape ${i + 1} sur ${n}</h2>
+    <div class="dots wide">${r.steps.map((_, j) => `<i class="${j <= i ? 'on' : ''}"></i>`).join('')}</div>
+    ${ui.timers.length ? `<div class="timers">${ui.timers.map((t) => `<button class="timer" data-a="timer-stop" data-t="${t.end}" aria-label="Arrêter le minuteur">⏱ ${esc(t.label)} <b data-timer="${t.end}">${clock(t.end - now)}</b> ✕</button>`).join('')}</div>` : ''}
+    <p class="bigstep">${r.steps[i]}</p>
+    ${mins.length ? `<div class="chips">${mins.map((m) => `<button class="chip" data-a="timer" data-m="${m}" data-l="Étape ${i + 1}">⏱ Lancer ${m} min</button>`).join('')}</div>` : ''}
+    <details class="cook-ings"><summary>Ingrédients pour ${plural(S.people.length, 'personne', 'personnes')}</summary>
+      <ul class="ings">${Object.keys(total).map((iid) => `<li><span>${esc(ING[iid].n)}</span><span class="q">${L.fmtQty(iid, total[iid])}</span></li>`).join('')}</ul></details>
+  </div>
+  <div class="sheet-foot"><div class="actions">
+    <button class="btn soft" data-a="cook-step" data-d="-1" ${i ? '' : 'disabled'}>Précédent</button>
+    ${i < n - 1 ? '<button class="btn primary" data-a="cook-step" data-d="1">Suivant</button>'
+    : inMenu ? `<button class="btn primary" data-a="cook" data-id="${id}">${icon('check')} C'est prêt</button>`
+      : '<button class="btn primary" data-a="close">Terminé</button>'}</div></div>`;
+}
+
+// ---------- Photos du foyer ----------
+
+const UP_KEY = 'adeux.photoup';
+const photoBusy = new Set();
+let photoRetryAt = 0;
+const uploaded = () => { try { return JSON.parse(localStorage.getItem(UP_KEY)) || {}; } catch { return {}; } };
+const markUploaded = (id, ts) => { try { localStorage.setItem(UP_KEY, JSON.stringify({ ...uploaded(), [id]: ts })); } catch { /* ignoré */ } };
+
+// Aligne les photos locales sur l'état partagé : envoie les nôtres, récupère celles de l'autre téléphone.
+function syncPhotos() {
+  let changed = false;
+  for (const id of Object.keys(userPhotos)) {
+    if (!S.photos[id]) { delete userPhotos[id]; photoDb.del(id).catch(() => {}); changed = true; }
+  }
+  if (changed) { render(); if (ui.sheet?.type === 'recipe') renderSheet(); }
+  const code = sync?.status().code;
+  if (!code || Date.now() < photoRetryAt) return;
+  const fail = () => { photoRetryAt = Date.now() + 60000; };
+  const up = uploaded();
+  for (const [id, ts] of Object.entries(S.photos)) {
+    if (photoBusy.has(id)) continue;
+    const mine = userPhotos[id];
+    if (mine && mine.ts >= ts) {
+      if (up[id] === mine.ts) continue;
+      photoBusy.add(id);
+      rpc('photo_put', { p_code: code, p_recipe: id, p_ts: mine.ts, p_data: mine.data })
+        .then((res) => { if (res.ok) markUploaded(id, mine.ts); }, fail)
+        .finally(() => photoBusy.delete(id));
+    } else {
+      photoBusy.add(id);
+      rpc('photo_get', { p_code: code, p_recipe: id }).then(async (res) => {
+        if (!res.found || res.ts < ts || !isPhotoData(res.data)) return;
+        userPhotos[id] = { ts: res.ts, data: res.data };
+        await photoDb.put(id, userPhotos[id]).catch(() => {});
+        markUploaded(id, res.ts);
+        render();
+        if (ui.sheet?.type === 'recipe') renderSheet();
+      }, fail).finally(() => photoBusy.delete(id));
+    }
+  }
 }
 
 // ---------- Onglet Courses ----------
@@ -485,7 +711,7 @@ function viewShop() {
       <p>Mets des recettes au menu : on calcule ce qu'il manque, en tenant compte de ton placard.</p>
       <button class="btn primary" data-a="tab" data-tab="ideas">Choisir des recettes</button></div>`;
   }
-  const { items, total } = L.shopping(S.menu, S.people, S.stock);
+  const { items, total } = L.shopping(S.menu, S.people, S.stock, S.mult);
   if (!items.length) {
     return `${html}<div class="empty"><div class="big">✅</div><h2>Tout est au placard</h2>
       <p>Tu as tout ce qu'il faut pour ${plural(S.menu.length, 'la recette', 'les recettes')} au menu.</p>
@@ -493,7 +719,14 @@ function viewShop() {
   }
   for (const id of Object.keys(S.checked)) if (!items.some((it) => it.id === id)) delete S.checked[id];
   const nChecked = items.filter((it) => S.checked[it.id]).length;
-  html += `<p class="muted pad">Pour ${plural(S.menu.length, 'recette', 'recettes')} au menu. Coche en magasin, puis range tes achats.</p>`;
+  html += `<p class="muted pad">Pour ${plural(S.menu.length, 'recette', 'recettes')} au menu. Coche en magasin, puis range tes achats. Touche un prix pour mettre celui du magasin.</p>`;
+  if (S.budget) {
+    const spent = weekSpend();
+    const tot = spent + total;
+    html += `<div class="card budget ${tot > S.budget + 0.005 ? 'over' : ''}"><b>${L.euro(tot)} sur ${L.euro(S.budget)} cette semaine</b>
+      <div class="bar"><i style="width:${Math.min(100, Math.round((tot / S.budget) * 100))}%"></i></div>
+      <small>${L.euro(spent)} déjà dépensés + ${L.euro(total)} dans cette liste${tot > S.budget + 0.005 ? ` · dépassement de ${L.euro(tot - S.budget)}` : ''}</small></div>`;
+  }
 
   let cat = null;
   for (const it of items) {
@@ -505,10 +738,10 @@ function viewShop() {
     }
     const unit = ing.u === 'pc' && ing.pack === 1;
     const info = `il en faut ${unit ? L.frac(it.need) : L.fmtStock(it.id, it.need)}${it.have > 0 ? ` · tu as ${L.fmtStock(it.id, it.have)}` : ''}`;
-    html += `<button class="row check ${S.checked[it.id] ? 'on' : ''}" data-a="check" data-id="${it.id}" aria-pressed="${!!S.checked[it.id]}">
+    html += `<div class="row check ${S.checked[it.id] ? 'on' : ''}"><button class="rowbtn" data-a="check" data-id="${it.id}" aria-pressed="${!!S.checked[it.id]}">
       <span class="box">${icon('check')}</span>
       <span class="row-main"><b>${esc(ing.n)}</b><small>${unit ? plural(it.packs, 'pièce', 'pièces') : `${it.packs > 1 ? `${it.packs} × ` : ''}${esc(ing.pl)}`} · ${info}</small></span>
-      <span class="price">${L.euro(it.cost)}</span></button>`;
+      </button><button class="price pricebtn ${S.prices[it.id] ? 'set' : ''}" data-a="price" data-id="${it.id}" aria-label="Modifier le prix">${L.euro(it.cost)}</button></div>`;
   }
   html += `</div>
     <div class="shop-foot card">
@@ -613,8 +846,14 @@ function viewTrack() {
         <div><b>${int(t.meal)}</b><small>kcal / repas</small></div></div>
       <div class="actions"><button class="btn soft" data-a="history" data-id="${p.id}">Historique</button>
         <button class="btn primary" data-a="weigh" data-id="${p.id}">${icon('plus')} Pesée</button></div>
+      <button class="btn text" data-a="snacks" data-id="${p.id}">🥣 Idées de petit-déjeuner et de collations</button>
     </section>`;
   }).join('');
+  html += `<section class="card track"><div class="track-head"><div><b>Dépenses de courses</b><small>d'après les courses rangées au placard</small></div></div>
+      <div class="stats"><div><b>${L.euro(weekSpend())}</b><small>cette semaine</small></div>
+        <div><b>${L.euro(monthSpend())}</b><small>ce mois-ci</small></div>
+        <div><b>${S.budget ? L.euro(S.budget) : '—'}</b><small>budget / semaine</small></div></div>
+      <button class="btn soft" data-a="budget-open">${S.budget ? 'Modifier le budget' : 'Fixer un budget par semaine'}</button></section>`;
   html += `<p class="muted pad small">Chaque recette couvre environ 35 % de tes calories du jour ; le reste, c'est le petit-déjeuner et les collations.
     Ces chiffres sont des estimations, pas un avis médical. ${plural(S.history.length, 'recette cuisinée', 'recettes cuisinées')} jusqu'ici.</p>`;
   return html;
@@ -762,11 +1001,13 @@ const isStandalone = () => navigator.standalone === true || matchMedia('(display
 const TABS = [['ideas', 'Recettes', 'ideas'], ['shop', 'Courses', 'shop'], ['stock', 'Placard', 'stock'], ['track', 'Suivi', 'track']];
 const VIEWS = { ideas: viewIdeas, shop: viewShop, stock: viewStock, track: viewTrack, settings: viewSettings };
 const SHEETS = {
-  recipe: sheetRecipe, plan: sheetPlan, stockEdit: sheetStockEdit, stockAdd: sheetStockAdd, weigh: sheetWeigh,
+  recipe: sheetRecipe, plan: sheetPlan, price: sheetPrice, budget: sheetBudget, rate: sheetRate,
+  snacks: sheetSnacks, browse: sheetBrowse, cook: sheetCook, stockEdit: sheetStockEdit, stockAdd: sheetStockAdd, weigh: sheetWeigh,
   history: sheetHistory, person: sheetPerson, export: sheetExport, import: sheetImport,
 };
 
 function render(top = false) {
+  L.setPrices(S.prices);
   const view = $('#view');
   const tabs = $('#tabs');
   const y = view.scrollTop;
@@ -776,7 +1017,7 @@ function render(top = false) {
     tabs.hidden = true;
   } else {
     view.innerHTML = VIEWS[ui.tab]();
-    const n = S.menu.length ? L.shopping(S.menu, S.people, S.stock).items.length : 0;
+    const n = S.menu.length ? L.shopping(S.menu, S.people, S.stock, S.mult).items.length : 0;
     tabs.hidden = ui.tab === 'settings';
     tabs.innerHTML = TABS.map(([id, label, ic]) => `<button class="${ui.tab === id ? 'on' : ''}" data-a="tab" data-tab="${id}">
       <span class="tab-ic">${icon(ic)}${id === 'shop' && n ? `<i class="badge">${n}</i>` : ''}</span><span>${label}</span></button>`).join('');
@@ -791,7 +1032,7 @@ function renderSheet() {
   const body = el.querySelector('.sheet-body');
   const y = body ? body.scrollTop : 0;
   el.innerHTML = `<div class="backdrop" data-a="close"></div>
-    <div class="sheet-panel ${ui.sheet.type === 'recipe' ? 'tall' : ''}" role="dialog" aria-modal="true">
+    <div class="sheet-panel ${['recipe', 'browse', 'cook'].includes(ui.sheet.type) ? 'tall' : ''}" role="dialog" aria-modal="true">
       <button class="iconbtn sheet-close" data-a="close" aria-label="Fermer">${icon('close')}</button>
       <div class="sheet-body">${SHEETS[ui.sheet.type](ui.sheet)}</div></div>`;
   el.querySelector('.sheet-body').scrollTop = y;
@@ -810,6 +1051,7 @@ function openSheet(s) {
 function closeSheet() {
   const el = $('#sheet');
   if (!ui.sheet) return;
+  if (ui.sheet.type === 'cook') keepAwake(false);
   ui.sheet = null;
   el.classList.remove('open');
   setTimeout(() => { if (!ui.sheet) { el.hidden = true; el.innerHTML = ''; } }, 280);
@@ -856,7 +1098,7 @@ const A = {
     S.current = null; ui.anim = true; commit({ top: true });
   },
   add(d) {
-    if (!S.menu.includes(d.id)) S.menu.push(d.id);
+    if (!S.menu.includes(d.id)) { S.menu.push(d.id); S.days[d.id] = freeSlots(1)[0]; }
     if (S.current === d.id) S.current = null;
     ui.anim = true; closeSheet(); commit({ sheet: false });
     toast('Ajoutée au menu · liste de courses mise à jour');
@@ -865,11 +1107,18 @@ const A = {
   'plan-n'(d) { ui.sheet.n = Math.min(14, Math.max(2, ui.sheet.n + Number(d.d))); renderSheet(); },
   'plan-do'() {
     const before = S.menu.length;
-    S.menu = L.planMenu(S, ui.sheet.n);
+    const old = new Set(S.menu);
+    const want = ui.sheet.n;
+    S.menu = L.planMenu(S, want);
+    const fresh = S.menu.filter((id) => !old.has(id));
+    const slots = freeSlots(fresh.length, want > 7 ? 2 : 1);
+    fresh.forEach((id, i) => { S.days[id] = slots[i]; });
     if (S.menu.includes(S.current)) S.current = null;
     closeSheet(); commit({ sheet: false });
     document.getElementById('menu')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-    toast(S.menu.length > before ? `Menu de ${S.menu.length} repas prêt · liste de courses à jour` : 'Plus aucune recette à ajouter');
+    if (S.menu.length === before) toast(S.budget ? 'Budget atteint : aucun repas ajouté' : 'Plus aucune recette à ajouter');
+    else if (S.menu.length < want && S.budget) toast(`Budget atteint : menu de ${S.menu.length} repas`, 4000);
+    else toast(`Menu de ${S.menu.length} repas prêt · liste de courses à jour`);
   },
   swap(d) {
     const i = S.menu.indexOf(d.id);
@@ -878,35 +1127,116 @@ const A = {
     const pick = L.rankRecipes({ ...S, menu: rest }).find((x) => x !== d.id);
     if (!pick) return toast('Aucune autre recette disponible');
     S.menu[i] = pick;
+    if (S.days[d.id]) S.days[pick] = S.days[d.id];
+    delete S.days[d.id]; delete S.mult[d.id];
     if (S.current === pick) S.current = null;
     save(); render(); openSheet({ type: 'recipe', id: pick, who: 'all' });
   },
   'menu-clear'() {
     if (!confirm('Retirer toutes les recettes du menu ?')) return;
-    S.menu = []; commit({ sheet: false });
+    S.menu = []; S.days = {}; S.mult = {}; commit({ sheet: false });
   },
-  unmenu(d) { S.menu = S.menu.filter((x) => x !== d.id); closeSheet(); commit({ sheet: false }); },
+  unmenu(d) { dropFromMenu(d.id); closeSheet(); commit({ sheet: false }); },
   dislike(d) {
-    S.disliked.push(d.id);
+    S.disliked.push(d.id); dropFromMenu(d.id);
     if (S.current === d.id) S.current = null;
     closeSheet(); commit({ sheet: false }); toast('On ne te la proposera plus');
   },
   undislike() { S.disliked = []; commit(); toast('Recettes réaffichées'); },
   cook(d) {
-    L.cook(S.stock, RECIPE_BY_ID[d.id], S.people);
-    S.menu = S.menu.filter((x) => x !== d.id);
+    L.cook(S.stock, RECIPE_BY_ID[d.id], S.people, S.mult[d.id] || 1);
+    dropFromMenu(d.id);
     S.history.push({ id: d.id, d: L.today(), t: Date.now() });
     if (S.history.length > 200) S.history = S.history.slice(-200);
-    closeSheet(); commit({ sheet: false }); toast('Bon appétit ! Placard mis à jour');
+    if (ui.sheet?.type === 'cook') keepAwake(false);
+    save(); render(); toast('Bon appétit ! Placard mis à jour');
+    openSheet({ type: 'rate', id: d.id });
   },
+  rate(d) {
+    const { id } = ui.sheet;
+    const v = Number(d.v);
+    S.ratings[id] = v;
+    if (v === -1 && !S.disliked.includes(id)) S.disliked.push(id);
+    closeSheet(); commit({ sheet: false });
+    toast(v === 1 ? 'Noté ❤️ : on vous la reproposera' : v === -1 ? 'On ne vous la proposera plus' : 'Merci !');
+  },
+  'hide-nag'() { try { localStorage.setItem('adeux.nag', L.today()); } catch { /* ignoré */ } render(); },
+
+  // Calendrier et double portion
+  'day-date'(d, el) {
+    if (!el.value) delete S.days[d.id];
+    else S.days[d.id] = { d: el.value, s: S.days[d.id]?.s || 'soir' };
+    commit();
+  },
+  'day-slot'(d) { S.days[d.id] = { d: S.days[d.id]?.d || L.today(), s: d.v }; commit(); },
+  double(d) { if (S.mult[d.id] === 2) delete S.mult[d.id]; else S.mult[d.id] = 2; commit(); },
+
+  // Recherche
+  browse() { openSheet({ type: 'browse', f: [], q: '' }); },
+  'browse-f'(d) {
+    ui.sheet.q = $('#bq')?.value || '';
+    ui.sheet.f = toggle(ui.sheet.f, d.id);
+    renderSheet();
+  },
+
+  // Mode cuisine et minuteurs
+  cookmode(d) { primeAudio(); keepAwake(true); openSheet({ type: 'cook', id: d.id, i: 0 }); },
+  'cook-step'(d) {
+    ui.sheet.i = Math.min(RECIPE_BY_ID[ui.sheet.id].steps.length - 1, Math.max(0, ui.sheet.i + Number(d.d)));
+    renderSheet();
+    $('#sheet .sheet-body').scrollTop = 0;
+  },
+  timer(d) {
+    primeAudio();
+    ui.timers.push({ end: Date.now() + Number(d.m) * 60000, label: `${d.l}, ${d.m} min` });
+    renderSheet();
+  },
+  'timer-stop'(d) { ui.timers = ui.timers.filter((t) => String(t.end) !== d.t); renderSheet(); },
+
+  // Photos du foyer
+  async photo(d, el) {
+    const file = el.files?.[0];
+    if (!file) return;
+    try {
+      const data = await shrinkPhoto(file);
+      const ts = Date.now();
+      userPhotos[d.id] = { ts, data };
+      await photoDb.put(d.id, userPhotos[d.id]).catch(() => {});
+      S.photos[d.id] = ts;
+      commit(); syncPhotos(); toast('Photo enregistrée');
+    } catch { toast("Impossible d'utiliser cette photo"); }
+  },
+  'photo-del'(d) { delete S.photos[d.id]; commit(); syncPhotos(); },
+
+  // Prix réels et budget
+  price(d) { openSheet({ type: 'price', id: d.id }); setTimeout(() => $('#pr-val')?.select(), 350); },
+  'price-save'() {
+    const v = parseNum($('#pr-val').value);
+    if (!Number.isFinite(v) || v <= 0 || v > 200) { ui.sheet.err = 'Entre un prix entre 0,01 et 200 €'; return renderSheet(); }
+    S.prices[ui.sheet.id] = Math.round(v * 100) / 100;
+    closeSheet(); commit({ sheet: false }); toast('Prix enregistré');
+  },
+  'price-reset'() { delete S.prices[ui.sheet.id]; closeSheet(); commit({ sheet: false }); },
+  'budget-open'() { openSheet({ type: 'budget' }); },
+  'budget-save'() {
+    const v = parseNum($('#bu-val').value);
+    if (!Number.isFinite(v) || v < 5 || v > 2000) { ui.sheet.err = 'Entre un montant entre 5 et 2 000 €'; return renderSheet(); }
+    S.budget = Math.round(v * 100) / 100;
+    closeSheet(); commit({ sheet: false }); toast('Budget enregistré');
+  },
+  'budget-clear'() { S.budget = null; closeSheet(); commit({ sheet: false }); },
+  snacks(d) { openSheet({ type: 'snacks', id: d.id }); },
 
   // Courses
   check(d) { if (S.checked[d.id]) delete S.checked[d.id]; else S.checked[d.id] = true; commit(); },
   store() {
-    const { items } = L.shopping(S.menu, S.people, S.stock);
+    const { items } = L.shopping(S.menu, S.people, S.stock, S.mult);
     const any = items.some((it) => S.checked[it.id]);
     const bought = items.filter((it) => !any || S.checked[it.id]);
     for (const it of bought) L.addPacks(S.stock, it.id, it.packs);
+    const paid = bought.reduce((a, it) => a + it.cost, 0);
+    if (paid > 0) S.spend.push({ d: L.today(), t: Date.now(), a: Math.round(paid * 100) / 100 });
+    if (S.spend.length > 300) S.spend = S.spend.slice(-300);
     S.checked = {};
     commit({ top: true });
     toast(`${plural(bought.length, 'article rangé', 'articles rangés')} au placard`);
@@ -1052,18 +1382,47 @@ document.addEventListener('input', (ev) => {
     if (fld?.classList.contains('bad')) { fld.classList.remove('bad'); fld.querySelector('em')?.remove(); }
     const hint = el.closest('form, .form')?.querySelector('#form-hint');
     if (hint) hint.innerHTML = formHint(ui.draft, !(ui.sheet?.type === 'person' && ui.sheet.id));
-  } else if (el.id === 'search') {
-    const q = el.value.trim().toLowerCase();
-    document.querySelectorAll('#search-list .row').forEach((r) => { r.hidden = !r.dataset.name.includes(q); });
+  } else if (el.type === 'search') {
+    const q = norm(el.value.trim());
+    document.querySelectorAll(`#${el.dataset.list || 'search-list'} .row`).forEach((r) => { r.hidden = !norm(r.dataset.name).includes(q); });
   }
+});
+
+document.addEventListener('change', (ev) => {
+  const fn = ev.target.dataset.c && A[ev.target.dataset.c];
+  if (fn) fn(ev.target.dataset, ev.target);
+});
+
+// Minuteurs du mode cuisine : décompte chaque seconde, bip à la fin.
+setInterval(() => {
+  if (!ui.timers.length) return;
+  const now = Date.now();
+  const done = ui.timers.filter((t) => t.end <= now);
+  if (done.length) {
+    ui.timers = ui.timers.filter((t) => t.end > now);
+    beep();
+    toast(`⏰ ${done[0].label} : c'est prêt !`, 8000);
+    if (ui.sheet?.type === 'cook') renderSheet();
+  }
+  document.querySelectorAll('[data-timer]').forEach((el) => { el.textContent = clock(Number(el.dataset.timer) - now); });
+}, 1000);
+
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible' && ui.sheet?.type === 'cook') keepAwake(true);
 });
 
 document.addEventListener('keydown', (ev) => { if (ev.key === 'Escape') closeSheet(); });
 
 render(true);
 
+photoDb.all().then((all) => {
+  userPhotos = Object.fromEntries(Object.entries(all).filter(([, v]) => v && isPhotoData(v.data)));
+  if (Object.keys(userPhotos).length) render();
+  syncPhotos();
+}).catch(() => {});
+
 if (sync) {
-  const tick = () => { if (document.visibilityState === 'visible') sync.pull(); };
+  const tick = () => { if (document.visibilityState === 'visible') { sync.pull(); syncPhotos(); } };
   setInterval(tick, 4000);
   document.addEventListener('visibilitychange', tick);
   window.addEventListener('online', tick);

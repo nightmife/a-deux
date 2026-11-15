@@ -36,11 +36,13 @@ sinon les iPhones gardent l'ancienne version plus longtemps.
 | `js/app.js` | Interface : état, rendu, actions, onboarding, feuilles modales |
 | `js/sync.js` | Moteur de synchro (indépendant du DOM et du réseau, `rpc` et `store` injectés) |
 | `js/merge.js` | Fusion à trois voies d'états JSON (`merge3`, `eq`) |
+| `js/device.js` | Appareil : photos en IndexedDB, réduction d'image, bip, écran allumé (wake lock) |
 | `js/config.js` | URL et clé publique Supabase. Vide = synchro désactivée, l'app retombe sur l'export par code |
 | `js/photos.js` | Généré : `PHOTOS[id] = {a: auteur, l: licence, u: page source}` |
 | `img/recipes/<id>.jpg` | Photos 900×675 (Wikimedia Commons) |
 | `sw.js` | Service worker : réseau d'abord pour le code, cache d'abord pour les images |
 | `supabase/schema.sql` | Table `households` + fonctions `household_get` / `household_put` |
+| `supabase/photos.sql` | Table `photos` + fonctions `photo_put` / `photo_get` (photos du foyer) |
 | `tools/photos.py` | Recherche et téléchargement des photos, `tools/photo_choices.json` = choix retenus |
 | `tests/*.test.mjs` | Tests `node:test` de `logic.js`, `merge.js`, `sync.js` |
 
@@ -85,6 +87,13 @@ pour le profil « perte de poids », et qu'aucun ingrédient n'est inutilisé.
   + pénalité « même protéine déjà au menu » + aléa. Filtre matériel, exclusions, recettes masquées.
 - `planMenu(state, n)` : complète le menu jusqu'à n repas, plats frais en premier.
 - `fmtQty` (recette) et `fmtStock` (placard) : affichage des quantités.
+- `setPrices(S.prices)` / `priceOf(id)` : prix réels. `render()` appelle `setPrices` à chaque rendu.
+- `needs`, `shopping`, `leftovers`, `cook` acceptent un multiplicateur (`mult` ou `k`) pour la double portion.
+- `planMenu` respecte `state.budget` : il s'arrête avant que le total des courses ne le dépasse.
+- `snackPlan(personne, graine)` : idées de petit-déjeuner et collations (`SNACKS` dans `data.js`) pour les
+  30 % de calories hors repas. Purement informatif, pas relié aux courses.
+- Les deux prix affichés : « € / pers. » = `mealCost` (part réellement consommée) ; « en caisse » = `shopping`
+  (paquets entiers à acheter). Ils diffèrent toujours, c'est voulu.
 
 ## État (`js/app.js`)
 
@@ -93,7 +102,13 @@ Un seul objet `S`, enregistré dans `localStorage['adeux.v1']` :
 ```js
 { v: 1, onboarded, people: [{ id, name, sex, age, height, weight, goal, activity, appetite, weighIns: [{d, w}] }],
   equip: ['pl','af'], avoid: [], stock: { ingId: quantité }, menu: [recetteId], checked: { ingId: true },
-  history: [{ id, d, t }], disliked: [], skipped: [], current: recetteId }
+  history: [{ id, d, t }], disliked: [], skipped: [], current: recetteId,
+  days: { recetteId: { d: 'AAAA-MM-JJ', s: 'midi'|'soir' } },   // calendrier des plats du menu
+  mult: { recetteId: 2 },                                        // plat cuisiné en double
+  prices: { ingId: prixDuPaquet },                               // prix réels saisis, remplacent `pr`
+  budget: euros par semaine | null, spend: [{ d, t, a }],        // budget et dépenses (courses rangées)
+  ratings: { recetteId: 1 | 0 | -1 },                            // 1 = favori, -1 = masquée
+  photos: { recetteId: horodatage } }                            // photo du foyer (l'image est dans IndexedDB)
 ```
 
 - `sanitize()` nettoie tout état chargé ou reçu ; `weight` vaut toujours la dernière pesée.
@@ -108,6 +123,14 @@ Un seul objet `S`, enregistré dans `localStorage['adeux.v1']` :
   Les formulaires utilisent `data-a-submit="nom"`.
 - Champs de formulaire : `data-f="champ"` écrit dans `ui.draft` à chaque frappe.
 - Toute donnée utilisateur affichée passe par `esc()`.
+- Événements `change` : `data-c="nom"` (date du calendrier, choix d'une photo).
+- Feuilles : `recipe`, `plan`, `price`, `budget`, `rate` (note après cuisson), `snacks`, `browse` (recherche et
+  filtres), `cook` (mode cuisine pas à pas, minuteurs dans `ui.timers`, écran maintenu allumé), et les anciennes.
+- Calendrier : `freeSlots()` attribue le prochain créneau libre à tout plat ajouté au menu ; `dropFromMenu(id)`
+  retire un plat et nettoie `days` et `mult`. Toujours passer par lui.
+- Photos du foyer : `shrinkPhoto` (JPEG 800×600), stockées dans IndexedDB (`userPhotos` en mémoire), `media()`
+  les affiche en priorité. `syncPhotos()` envoie et récupère les images via `photo_put` / `photo_get` ; l'état
+  partagé ne contient que l'horodatage.
 - Ajouter un écran : une fonction `viewXxx`, une entrée dans `VIEWS` et `TABS`. Ajouter une modale : `sheetXxx` + `SHEETS`.
 
 ## Synchronisation
@@ -143,4 +166,7 @@ Un seul objet `S`, enregistré dans `localStorage['adeux.v1']` :
   temporaire, profil `devices['iPhone 14']`. Intercepter `**/js/config.js` pour désactiver ou simuler Supabase,
   afin de ne pas créer de foyers de test dans le vrai projet. Pas de police emoji : carrés normaux dans les captures.
 - `pkill -f "http.server 8766"` tue aussi le shell qui le lance : écrire `"http.server 876[6]"`.
+- Si `supabase/photos.sql` n'a pas été exécuté, les photos restent sur le téléphone qui les a prises
+  (l'app réessaie toutes les 60 s, sans erreur visible).
+- Les rappels de pesée sont une bannière dans l'app, pas des notifications (il faudrait un serveur push).
 - Une ligne de test `TESTSYNC00` existe dans la table Supabase, sans conséquence.

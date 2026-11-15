@@ -36,6 +36,13 @@ QUERIES = {
     'poulet-roti': 'roast chicken potatoes carrots', 'curry-tofu': 'tofu curry',
     'brunch': 'scrambled eggs avocado toast', 'riz-haricots': 'rice beans fried egg',
     'pates-chevre': 'pasta zucchini', 'poelee-montagnarde': 'tartiflette',
+    'pates-poulet-paprika': 'creamy chicken pasta', 'poulet-basquaise': 'poulet basquaise',
+    'parmentier-poele': 'hachis parmentier', 'wrap-thon': 'tuna wrap', 'salade-riz-poulet': 'rice salad',
+    'lentilles-curry-oeuf': 'lentil curry egg', 'gnocchi-tomate-mozza': 'gnocchi tomato sauce',
+    'saumon-patate-douce': 'salmon sweet potato', 'dinde-curry-legumes': 'turkey curry',
+    'frittata-courgette': 'frittata', 'tacos-boeuf': 'beef tacos', 'riz-chipo-poivron': 'sausage rice peppers',
+    'nouilles-boeuf-brocoli': 'beef broccoli noodles', 'poulet-cacahuete': 'chicken satay rice',
+    'colin-tomate': 'fish tomato sauce', 'pates-brocoli-lardons': 'pasta broccoli', 'tartines-chevre': 'goat cheese toast',
 }
 
 def get(url, tries=7):

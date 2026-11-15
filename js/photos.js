@@ -279,5 +279,75 @@ export const PHOTOS = {
   "a": "Benoît Prieur",
   "l": "CC0",
   "u": "https://commons.wikimedia.org/wiki/File:Une_tartiflette_sortie_du_four.jpg"
+ },
+ "pates-poulet-paprika": {
+  "a": "Samizambak",
+  "l": "CC BY-SA 4.0",
+  "u": "https://commons.wikimedia.org/wiki/File:Kremal%C4%B1_Mantarl%C4%B1_Tavuklu_Makarna.jpg"
+ },
+ "poulet-basquaise": {
+  "a": "Arnaud 25",
+  "l": "CC BY-SA 4.0",
+  "u": "https://commons.wikimedia.org/wiki/File:Poulet_basquaise_02.jpg"
+ },
+ "parmentier-poele": {
+  "a": "Bycro",
+  "l": "CC BY-SA 4.0",
+  "u": "https://commons.wikimedia.org/wiki/File:Hachis_parmentier_03.jpg"
+ },
+ "wrap-thon": {
+  "a": "Jen Arrr",
+  "l": "CC BY-SA 2.0",
+  "u": "https://commons.wikimedia.org/wiki/File:Albacore_tuna_rice_wrap_(7000531264).jpg"
+ },
+ "salade-riz-poulet": {
+  "a": "Steven Depolo from Grand Rapids, MI, USA",
+  "l": "CC BY 2.0",
+  "u": "https://commons.wikimedia.org/wiki/File:Bean_Rice_Salad.jpg"
+ },
+ "gnocchi-tomate-mozza": {
+  "a": "Davide Zambelli",
+  "l": "CC BY 3.0",
+  "u": "https://commons.wikimedia.org/wiki/File:Gnocchi_alla_sorrentina.jpg"
+ },
+ "saumon-patate-douce": {
+  "a": "Daderot",
+  "l": "CC0",
+  "u": "https://commons.wikimedia.org/wiki/File:Salmon_with_sweet_potato_pancake,_tapenade,_and_greens_-_Dunedin,_New_Zealand.jpg"
+ },
+ "dinde-curry-legumes": {
+  "a": "E4024",
+  "l": "CC BY-SA 4.0",
+  "u": "https://commons.wikimedia.org/wiki/File:Chicken_curry_in_Turkey.jpg"
+ },
+ "frittata-courgette": {
+  "a": "Andy Li",
+  "l": "CC0",
+  "u": "https://commons.wikimedia.org/wiki/File:Frittata_-_Bam%27s_Kitchen_2024-04-02.jpg"
+ },
+ "tacos-boeuf": {
+  "a": "Larry Miller",
+  "l": "CC BY-SA 2.0",
+  "u": "https://commons.wikimedia.org/wiki/File:001_Tacos_de_carnitas,_carne_asada_y_al_pastor.jpg"
+ },
+ "nouilles-boeuf-brocoli": {
+  "a": "Lou Stejskal",
+  "l": "CC BY 2.0",
+  "u": "https://commons.wikimedia.org/wiki/File:Beef_Pad_See_Eiw_Noodles,_Egg,_Chinese_Broccoli_($10.95).jpg"
+ },
+ "poulet-cacahuete": {
+  "a": "Andy Li",
+  "l": "CC0",
+  "u": "https://commons.wikimedia.org/wiki/File:Stir_fried_chicken_with_satay_sauce_-_Stir_Fry_by_CK_2025-04-06.jpg"
+ },
+ "pates-brocoli-lardons": {
+  "a": "AnticoMu90",
+  "l": "CC BY-SA 4.0",
+  "u": "https://commons.wikimedia.org/wiki/File:BroccoliPasta.jpg"
+ },
+ "tartines-chevre": {
+  "a": "DocteurCosmos",
+  "l": "CC BY-SA 3.0",
+  "u": "https://commons.wikimedia.org/wiki/File:Salade_mesclun_et_ch%C3%A8vre_chaud_sur_toasts.jpg"
  }
 };

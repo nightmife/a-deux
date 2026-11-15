@@ -177,5 +177,56 @@
  "pdt-farcie": {
   "q": "jacket potato",
   "i": 0
+ },
+ "pates-poulet-paprika": {
+  "i": 0
+ },
+ "poulet-basquaise": {
+  "i": 1
+ },
+ "parmentier-poele": {
+  "i": 2
+ },
+ "wrap-thon": {
+  "i": 1
+ },
+ "salade-riz-poulet": {
+  "i": 2
+ },
+ "lentilles-curry-oeuf": {
+  "i": null
+ },
+ "gnocchi-tomate-mozza": {
+  "i": 0
+ },
+ "saumon-patate-douce": {
+  "i": 0
+ },
+ "dinde-curry-legumes": {
+  "i": 2
+ },
+ "frittata-courgette": {
+  "i": 0
+ },
+ "tacos-boeuf": {
+  "i": 0
+ },
+ "riz-chipo-poivron": {
+  "i": null
+ },
+ "nouilles-boeuf-brocoli": {
+  "i": 0
+ },
+ "poulet-cacahuete": {
+  "i": 1
+ },
+ "colin-tomate": {
+  "i": null
+ },
+ "pates-brocoli-lardons": {
+  "i": 0
+ },
+ "tartines-chevre": {
+  "i": 3
  }
 }
